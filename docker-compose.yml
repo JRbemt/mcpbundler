@@ -1,0 +1,86 @@
+services:
+  adminer:
+    image: adminer
+    restart: always
+    networks:
+      - mcpbundler-network
+    depends_on:
+      - db
+    environment:
+      - ADMINER_DESIGN=pepa-linha-dark
+    ports:
+      - "8080:8080"
+  mcpbundler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: mcpbundler
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER? Variable not set}:${POSTGRES_PASSWORD? Variable not set}@db:5432/${POSTGRES_DB? Variable not set}
+      - PORT=3000
+      - HOST=0.0.0.0
+      - NODE_ENV=production
+      - MOCK_AUTH=false
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:3000}
+      - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mcpbundler-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3000/metrics",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db:
+    image: postgres:15-alpine
+    container_name: db
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER?Variable not Set}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not Set}
+      - POSTGRES_DB=${POSTGRES_DB?Variable not Set}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - mcpbundler-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER?Variable not Set} -d ${POSTGRES_DB?Variable not Set}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  mcpbundler-network:
+    driver: bridge

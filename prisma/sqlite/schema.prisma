@@ -1,0 +1,125 @@
+// Prisma schema for MCP Bundler (SQLite variant)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Auth strategy for MCPs in collections
+enum AuthStrategy {
+  MASTER         // Use master token from Mcp.masterAuthConfig
+  TOKEN_SPECIFIC // Use token-specific credentials from CollectionTokenMcpCredential
+  NONE           // No authentication required
+}
+
+// Collections - Groups of upstream MCPs
+model Collection {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  collectionMcps CollectionMcp[]
+  tokens         CollectionToken[]
+
+  @@map("collections")
+}
+
+// MCPs - Master MCP definitions
+model Mcp {
+  id               String   @id @default(uuid())
+  namespace        String   @unique
+  url              String
+  author           String
+  description      String
+  version          String   @default("1.0.0")
+  stateless        Boolean  @default(false)
+  tokenCost        Float    @default(0.001) @map("token_cost")
+  masterAuthConfig String?  @map("master_auth_config") // Optional shared credentials (JSON string)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  collectionMcps                CollectionMcp[]
+  collectionTokenMcpCredentials CollectionTokenMcpCredential[]
+
+  @@map("mcps")
+}
+
+// Collection MCPs - Junction table with per-MCP permissions and auth strategy
+model CollectionMcp {
+  id           String       @id @default(uuid())
+  collectionId String       @map("collection_id")
+  mcpId        String       @map("mcp_id")
+  collection   Collection   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  mcp          Mcp          @relation(fields: [mcpId], references: [id], onDelete: Cascade)
+  authStrategy AuthStrategy @default(MASTER) @map("auth_strategy")
+  addedAt      DateTime     @default(now()) @map("added_at")
+
+  // Per-MCP permissions (shared by all tokens, stored as JSON strings)
+  // Use ["*"] for ALL, [] for NONE, or specific tool/resource/prompt names
+  allowedTools     String @default("[\"*\"]") @map("allowed_tools")
+  allowedResources String @default("[\"*\"]") @map("allowed_resources")
+  allowedPrompts   String @default("[\"*\"]") @map("allowed_prompts")
+
+  @@unique([collectionId, mcpId])
+  @@map("collection_mcps")
+}
+
+// OAuth credentials for token-specific MCP credentials
+model OAuthCredential {
+  id                    String                       @id @default(uuid())
+  tokenMcpCredentialId  String?                      @map("token_mcp_credential_id")
+  tokenId               String?                      @map("token_id")
+  tokenMcpCredential    CollectionTokenMcpCredential? @relation(fields: [tokenMcpCredentialId], references: [id], onDelete: Cascade)
+  token                 CollectionToken?             @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  provider              String                       // e.g., "notion", "github", "google"
+  accessToken           String                       @map("access_token") // Encrypted
+  refreshToken          String?                      @map("refresh_token") // Encrypted
+  expiresAt             DateTime?                    @map("expires_at")
+  createdAt             DateTime                     @default(now()) @map("created_at")
+  updatedAt             DateTime                     @updatedAt @map("updated_at")
+
+  @@map("oauth_credentials")
+}
+
+// Collection access tokens
+model CollectionToken {
+  id           String     @id @default(uuid())
+  collectionId String     @map("collection_id")
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  tokenHash    String     @unique @map("token_hash") // SHA-256 hash
+  expiresAt    DateTime?  @map("expires_at")
+  revoked      Boolean    @default(false)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  // Relations
+  mcpCredentials   CollectionTokenMcpCredential[]
+  oauthCredentials OAuthCredential[]
+
+  @@map("collection_tokens")
+}
+
+// Token-specific MCP credentials (used when authStrategy = TOKEN_SPECIFIC)
+model CollectionTokenMcpCredential {
+  id           String   @id @default(uuid())
+  tokenId      String   @map("token_id")
+  mcpId        String   @map("mcp_id")
+  authConfig   String   @map("auth_config") // JSON string
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  token            CollectionToken   @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  mcp              Mcp               @relation(fields: [mcpId], references: [id], onDelete: Cascade)
+  oauthCredentials OAuthCredential[]
+
+  @@unique([tokenId, mcpId])
+  @@map("collection_token_mcp_credentials")
+}

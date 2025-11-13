@@ -1,0 +1,94 @@
+# Node modules
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Development files
+.env
+.env.local
+.env.*.local
+*.local
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+dev.db*
+prisma/dev.db*
+
+# Build artifacts
+dist
+build
+.next
+out
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+ARCHITECTURE.md
+IMPLEMENTATION.md
+docs
+*.md
+
+# Test files
+coverage
+.nyc_output
+test
+tests
+__tests__
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+.circleci
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Logs
+logs
+*.log
+.mcpbundler
+
+# Temporary files
+tmp
+temp
+.cache
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# Development tools
+nodemon.json
