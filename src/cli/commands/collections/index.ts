@@ -4,36 +4,52 @@
  * HTTP API client commands for managing collections and MCP servers
  */
 
-import { Command } from 'commander';
-import { listCollectionsCommand } from './list.js';
-import { createCollectionCommand } from './create.js';
-import { getTokenCommand } from './get-token.js';
+import { Command } from "commander";
+import { listCollectionsCommand } from "./list.js";
+import { createCollectionCommand } from "./create.js";
+import { removeCollectionCommand } from "./remove.js";
+import { getTokenCommand as getAccessTokenCommand } from "./get-token.js";
+import { HELP_FOOTER } from "../../utils/print-utils.js";
 
 
 export function createCollectionsCommand(): Command {
-  const command = new Command('collections');
-  command.description('Manage collections');
+  const command = new Command("collections")
+    .description("manage collections")
+    .showHelpAfterError()
+    .showSuggestionAfterError();
 
   command
-    .command('list')
-    .description('List all collections')
-    .option('--host [host]', 'Bundler server URL', 'http://127.0.0.1:3000')
-    .option('--token [token]', 'Auth token (optional)')
-    .action(listCollectionsCommand);
+    .command("access <collection-name>")
+    .description("generate access token for a collection (requires valid token)")
+    .action((collectionName, options, command) => {
+      const globalOpts = command.parent.parent.opts();
+      getAccessTokenCommand(collectionName, { ...options, ...globalOpts });
+    });
 
   command
-    .command('create <name>')
-    .description('Create a new collection')
-    .option('--host [host]', 'Bundler server URL', 'http://127.0.0.1:3000')
-    .option('--token [token]', 'Auth token (required for write operations)')
-    .action(createCollectionCommand);
+    .command("create <name>")
+    .description("create a new collection (requires valid token)")
+    .action((name, options, command) => {
+      const globalOpts = command.parent.parent.opts();
+      createCollectionCommand(name, { ...options, ...globalOpts });
+    });
 
   command
-    .command('token <collection-id>')
-    .description('Generate access token for a collection')
-    .option('--host [host]', 'Bundler server URL', 'http://127.0.0.1:3000')
-    .option('--token [token]', 'Auth token (required for admin operations)')
-    .action(getTokenCommand);
+    .command("list")
+    .description("list all collections (requires valid token)")
+    .action((options, command) => {
+      const globalOpts = command.parent.parent.opts();
+      listCollectionsCommand({ ...options, ...globalOpts });
+    });
 
+  command
+    .command("remove <name>")
+    .description("remove a collection by name (requires valid token to manage own collections, or an admin token for all collections)")
+    .action((name, options, command) => {
+      const globalOpts = command.parent.parent.opts();
+      removeCollectionCommand(name, { ...options, ...globalOpts });
+    });
+
+  command.addHelpText("after", HELP_FOOTER);
   return command;
 }

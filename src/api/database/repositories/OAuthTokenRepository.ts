@@ -5,6 +5,7 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypt
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
+const DEFAULT_KEY = "defau"
 
 /**
  * Get encryption key from environment or generate
@@ -13,7 +14,7 @@ function getEncryptionKey(): Buffer {
   const key = process.env.OAUTH_ENCRYPTION_KEY;
   if (!key) {
     console.warn('Warning: OAUTH_ENCRYPTION_KEY not set. Using default key. This is insecure for production!');
-    return createHash('sha256').update('default-key-please-change').digest();
+    return createHash('sha256').update(DEFAULT_KEY).digest();
   }
   return createHash('sha256').update(key).digest();
 }

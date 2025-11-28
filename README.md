@@ -32,6 +32,22 @@ npm run build
 npm link
 ```
 
+### PM2 Log Rotation (Required for Daemon Mode)
+
+The bundler uses PM2 to run as a daemon. For automatic log rotation with compression, you need to install the pm2-logrotate module:
+
+```bash
+pm2 install pm2-logrotate
+```
+
+This module provides:
+- Automatic log rotation when files reach 10MB
+- Retention of last 10 log files per type
+- Gzip compression of rotated logs
+- Configurable date-stamped file naming
+
+The bundler will automatically configure pm2-logrotate with optimal settings when you start the daemon.
+
 ## 🏃 Quick Start
 
 ### 1. Set up database
@@ -424,10 +440,31 @@ Example response:
 
 ### Logs
 
-Daemon logs are stored in `~/.mcpbundler/`:
+Daemon logs are stored in `~/.mcpbundler/logs/`:
 
 - `bundler.log` - stdout
 - `bundler.error.log` - stderr
+
+View logs in real-time:
+
+```bash
+npm run pm2:logs
+# or
+pm2 logs mcpbundler
+```
+
+Clear all logs:
+
+```bash
+npm run pm2:logs:flush
+# or
+pm2 flush mcpbundler
+```
+
+When pm2-logrotate is installed, logs are automatically:
+- Rotated when they reach 10MB
+- Compressed with gzip
+- Limited to 10 files per log type (oldest deleted automatically)
 
 ## 🏗️ Architecture
 

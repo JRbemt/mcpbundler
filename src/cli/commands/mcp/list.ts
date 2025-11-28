@@ -1,40 +1,40 @@
-import logger from '../../../utils/logger.js';
-import { BundlerAPIClient } from '../../utils/api-client.js';
+import { BundlerAPIClient } from "../../utils/api-client.js";
+import { banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface ListOptions {
   host: string;
-  token?: string;
+  token: string;
 }
 
-export async function listCommand(options: ListOptions): Promise<void> {
-  // Create HTTP API client
+export async function listMcpCommand(options: ListOptions): Promise<void> {
   const client = new BundlerAPIClient(options.host, options.token);
-
   try {
-    logger.debug({ serverUrl: options.host }, "Connecting to bundler server");
-    // List all collections with their MCPs
-    const collections = await client.listCollections();
+    const mcps = await client.listMcps();
 
-    if (collections.length === 0) {
-      logger.info('No collections found');
-      logger.info('Start by adding an MCP: mcpbundler manage add <url>');
+    banner(" MCP Servers ", { bg: BG_COLORS.CYAN });
+    console.group();
+
+    if (mcps.length === 0) {
+      console.log("(Currently no MCPs: mcpbundler mcp add)");
+      console.groupEnd();
       return;
     }
 
-    logger.info(`Found ${collections.length} collection(s):`);
+    const tableData = mcps.map(mcp => ({
+      Namespace: mcp.namespace,
+      URL: mcp.url,
+      Author: mcp.author,
+      Version: mcp.version,
+      Stateless: mcp.stateless ? "Yes" : "No",
+      Auth: mcp.auth_strategy || "NONE",
+      Created: new Date(mcp.created_at).toLocaleString(),
+    }));
 
-    for (const collection of collections) {
-      logger.info(`Collection: ${collection.name} (${collection.id})`);
-      logger.info(`MCPs: ${collection.mcps.length}`);
-
-      if (collection.mcps.length > 0) {
-        collection.mcps.forEach((mcp: any) => {
-          logger.info(` - ${mcp.namespace} (${mcp.url})`);
-        });
-      }
-    }
+    console.table(tableData);
+    console.groupEnd();
+    console.log()
   } catch (error: any) {
-    logger.error({ error }, 'Failed to list MCPs:');
+    console.error(`Failed to list MCPs: ${error.message}`);
     process.exit(1);
   }
 }

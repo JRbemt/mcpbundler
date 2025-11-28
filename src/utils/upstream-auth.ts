@@ -1,4 +1,4 @@
-import { UpstreamAuthConfig } from '../config/schemas.js';
+import { UpstreamAuthConfig } from '../core/config/schemas.js';
 import https from 'https';
 
 export interface AuthHeaders {

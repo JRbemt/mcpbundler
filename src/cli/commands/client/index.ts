@@ -4,19 +4,23 @@
  * Commands for connecting to mcpbundler server as an MCP client
  */
 
-import { Command } from 'commander';
-import { clientConnectCommand } from './connect.js';
+import { Command } from "commander";
+import { clientConnectCommand } from "./connect.js";
+import { HELP_FOOTER } from "../../utils/print-utils.js";
 
 export function createClientCommand(): Command {
-  const command = new Command('client')
-    .description('Connect to mcpbundler server and expose as MCP STDIO server');
+  const command = new Command("client")
+    .description("connect to mcpbundler server")
+    .showHelpAfterError()
+    .showSuggestionAfterError();
 
   const connect = command.command("connect")
-    .description("Connect to mcpbundler server and expose as STDIO MCP server")
-    .requiredOption("--host <host>", "Bundler server URL (e.g., http://localhost:3000)")
-    .requiredOption("--token <token>", "Authentication token for the bundler")
-    .option("--name <name>", "Server name (default: mcpbundler-client)")
+    .description("expose bundler as an STDIO Server for local LLM integration")
+    .option("--name [name]", "Server name", "mcpbundler-client")
+    .option("--host [host]", "API host", "http://0.0.0.0:3000")
+    .option("-c, --collection [token]", "Access token for the collection on the bundler server")
     .action(clientConnectCommand);
 
+  command.addHelpText("after", HELP_FOOTER)
   return command;
 }

@@ -18,16 +18,30 @@ services:
     container_name: mcpbundler
     env_file:
       - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "${PORT:-3000}:3000"
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER? Variable not set}:${POSTGRES_PASSWORD? Variable not set}@db:5432/${POSTGRES_DB? Variable not set}
+      - DATABASE_URL=postgresql://${POSTGRES_USER?Variable not set}:${POSTGRES_PASSWORD?Variable not set}@db:5432/${POSTGRES_DB?Variable not set}
       - PORT=3000
       - HOST=0.0.0.0
       - NODE_ENV=production
       - MOCK_AUTH=false
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:3000}
-      - OAUTH_ENCRYPTION_KEY=${OAUTH_ENCRYPTION_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY?Variable not set}
+      # Root user configuration
+      - ROOT_USER_NAME=${ROOT_USER_NAME?Variable not set}
+      - ROOT_USER_EMAIL=${ROOT_USER_EMAIL?Variable not set}
+      # Self-service registration
+      - SELF_SERVICE_ENABLED=${SELF_SERVICE_ENABLED?Variable not set}
+      - SELF_SERVICE_DEFAULT_PERMISSIONS=${SELF_SERVICE_DEFAULT_PERMISSIONS:-}
+      # Wildcard token (optional, disabled by default)
+      - RESOLVER_WILDCARD_ALLOW=${RESOLVER_WILDCARD_ALLOW:-false}
+      - RESOLVER_WILDCARD_TOKEN=${RESOLVER_WILDCARD_TOKEN:-}
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:

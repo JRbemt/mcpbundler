@@ -1,5 +1,7 @@
 import { PrismaClient, CollectionTokenMcpCredential, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
+import { encryptAuthConfig, decryptAuthConfig, isEncrypted } from '../../../utils/encryption.js';
+import logger from '../../../utils/logger.js';
 
 /**
  * MCP credential with nested Mcp details
@@ -17,6 +19,27 @@ export class McpCredentialRepository {
 
   constructor(prisma: PrismaClient) {
     this.prisma = prisma;
+  }
+
+  /**
+   * Decrypt auth config if encrypted
+   */
+  private decryptAuth(credential: CollectionTokenMcpCredential | null): CollectionTokenMcpCredential | null {
+    if (!credential || !credential.authConfig) {
+      return credential;
+    }
+
+    if (isEncrypted(credential.authConfig)) {
+      try {
+        const decrypted = decryptAuthConfig(credential.authConfig);
+        return { ...credential, authConfig: JSON.stringify(decrypted) };
+      } catch (error) {
+        logger.error({ credentialId: credential.id, error }, 'Failed to decrypt auth config');
+        return { ...credential, authConfig: '' };
+      }
+    }
+
+    return credential;
   }
 
   /**
@@ -62,13 +85,18 @@ export class McpCredentialRepository {
       throw new Error(`MCP not found: ${namespace}`);
     }
 
-    return await this.prisma.collectionTokenMcpCredential.create({
+    const encrypted = encryptAuthConfig(authConfig);
+    logger.info({ tokenId, mcpId: mcp.id }, 'Encrypting auth config for token-specific credential');
+
+    const created = await this.prisma.collectionTokenMcpCredential.create({
       data: {
         tokenId,
         mcpId: mcp.id,
-        authConfig: JSON.stringify(authConfig),
+        authConfig: encrypted,
       },
     });
+
+    return this.decryptAuth(created) || created;
   }
 
   /**
@@ -94,7 +122,10 @@ export class McpCredentialRepository {
       throw new Error(`MCP not found: ${namespace}`);
     }
 
-    return await this.prisma.collectionTokenMcpCredential.update({
+    const encrypted = encryptAuthConfig(authConfig);
+    logger.info({ tokenId, mcpId: mcp.id }, 'Encrypting updated auth config for token-specific credential');
+
+    const updated = await this.prisma.collectionTokenMcpCredential.update({
       where: {
         tokenId_mcpId: {
           tokenId,
@@ -102,9 +133,11 @@ export class McpCredentialRepository {
         },
       },
       data: {
-        authConfig: JSON.parse(JSON.stringify(authConfig)),
+        authConfig: encrypted,
       },
     });
+
+    return this.decryptAuth(updated) || updated;
   }
 
   /**
@@ -150,7 +183,7 @@ export class McpCredentialRepository {
       return null;
     }
 
-    return await this.prisma.collectionTokenMcpCredential.findUnique({
+    const credential = await this.prisma.collectionTokenMcpCredential.findUnique({
       where: {
         tokenId_mcpId: {
           tokenId,
@@ -158,6 +191,8 @@ export class McpCredentialRepository {
         },
       },
     });
+
+    return this.decryptAuth(credential);
   }
 
   /**
@@ -168,9 +203,10 @@ export class McpCredentialRepository {
     if (!tokenId) {
       return null;
     }
-    return await this.prisma.collectionTokenMcpCredential.findUnique({
+    const credential = await this.prisma.collectionTokenMcpCredential.findUnique({
       where: { id: tokenId },
     });
+    return this.decryptAuth(credential);
   }
 
   /**
@@ -183,7 +219,7 @@ export class McpCredentialRepository {
       throw new Error(`Token not found: ${tokenOrId}`);
     }
 
-    return await this.prisma.collectionTokenMcpCredential.findMany({
+    const credentials = await this.prisma.collectionTokenMcpCredential.findMany({
       where: { tokenId },
       include: {
         mcp: true,
@@ -191,6 +227,11 @@ export class McpCredentialRepository {
       orderBy: {
         createdAt: 'asc',
       },
+    }) as McpCredentialWithMcp[];
+
+    return credentials.map((cred) => {
+      const decrypted = this.decryptAuth(cred);
+      return decrypted || cred;
     }) as McpCredentialWithMcp[];
   }
 

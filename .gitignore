@@ -21,6 +21,12 @@ nul
 /coverage
 .env
 
+# Log files
+*.log
+*.gz
+logs/
+dist/src/utils/logs/
+
 # Development SQLite database files
 prisma/sqlite/data/
 dev.db

@@ -1,4 +1,4 @@
-// Prisma schema for MCP Bundler
+// Prisma schema for MCP Bundler (SQLite variant)
 
 generator client {
   provider = "prisma-client-js"
@@ -18,15 +18,18 @@ enum AuthStrategy {
 
 // Collections - Groups of upstream MCPs
 model Collection {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(uuid())
+  name        String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdById String?  @map("created_by_id")
 
   // Relations
+  createdBy      ApiUser?         @relation("CollectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
   collectionMcps CollectionMcp[]
   tokens         CollectionToken[]
 
+  @@index([createdById])
   @@map("collections")
 }
 
@@ -40,6 +43,7 @@ model Mcp {
   version          String   @default("1.0.0")
   stateless        Boolean  @default(false)
   tokenCost        Float    @default(0.001) @map("token_cost")
+  authStrategy AuthStrategy @default(NONE) @map("auth_strategy")
   masterAuthConfig String?  @map("master_auth_config") // Optional shared credentials (JSON string)
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
@@ -58,7 +62,6 @@ model CollectionMcp {
   mcpId        String       @map("mcp_id")
   collection   Collection   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   mcp          Mcp          @relation(fields: [mcpId], references: [id], onDelete: Cascade)
-  authStrategy AuthStrategy @default(MASTER) @map("auth_strategy")
   addedAt      DateTime     @default(now()) @map("added_at")
 
   // Per-MCP permissions (shared by all tokens, stored as JSON strings)
@@ -99,6 +102,7 @@ model CollectionToken {
   expiresAt    DateTime?  @map("expires_at")
   revoked      Boolean    @default(false)
   createdAt    DateTime   @default(now()) @map("created_at")
+  lastUsedAt   DateTime?  @map("last_used_at")
 
   // Relations
   mcpCredentials   CollectionTokenMcpCredential[]
@@ -112,7 +116,7 @@ model CollectionTokenMcpCredential {
   id           String   @id @default(uuid())
   tokenId      String   @map("token_id")
   mcpId        String   @map("mcp_id")
-  authConfig   String   @map("auth_config") // JSON string
+  authConfig   String   @map("auth_config") // Encrypted JSON string
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -122,4 +126,56 @@ model CollectionTokenMcpCredential {
 
   @@unique([tokenId, mcpId])
   @@map("collection_token_mcp_credentials")
+}
+
+// API keys for management API authentication
+model ApiUser {
+  id          String      @id @default(uuid())
+  name        String      // Descriptive name (e.g., "Production Server", "CI/CD Pipeline")
+  department  String?     @map("department")
+  contact     String      @map("contact") // for example email
+  keyHash     String      @unique @map("key_hash")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  lastUsedAt  DateTime?   @map("last_used_at")
+  revokedAt   DateTime?   @map("revoked_at")
+  isAdmin     Boolean     @map("is_admin")
+
+  createdById String?     @map("created_by_id")
+  createdBy   ApiUser?    @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  created            ApiUser[]            @relation("CreatedBy")
+  permissions        ApiUserPermission[]
+  createdCollections Collection[]         @relation("CollectionCreator")
+
+  @@index([isAdmin])
+  @@index([revokedAt])
+  @@index([createdById])
+  @@index([lastUsedAt])
+  @@map("api_user")
+}
+
+enum PermissionType {
+  CREATE_USER
+  ADD_MCP
+  LIST_USERS
+}
+
+model ApiUserPermission {
+  id                        String   @id @default(uuid())
+  userId                    String   @map("user_id")
+  user       ApiUser        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission PermissionType @map("permission_type")
+
+  @@unique([userId, permission])
+  @@index([permission])
+  @@map("api_user_permission")
+}
+
+// Global settings for self-service registration and other system-wide configs
+model GlobalSettings {
+  id                             String   @id @default("global")
+  allowSelfServiceRegistration   Boolean  @default(false) @map("allow_self_service_registration")
+  defaultSelfServicePermissions  String   @default("[]") @map("default_self_service_permissions") // JSON array of PermissionType
+
+  @@map("global_settings")
 }

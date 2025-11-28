@@ -5,8 +5,9 @@ import {
   CollectionRepository,
   McpRepository,
 } from '../database/repositories/index.js';
-import { UpstreamConfigSchema } from '../../config/schemas.js';
+import { UpstreamMCPConfigSchema } from '../../core/config/schemas.js';
 import { z } from 'zod';
+import { sendZodError } from '../../utils/error-formatter.js';
 
 export function createCollectionRoutes(prisma: PrismaClient): Router {
   const router = express.Router();
@@ -93,9 +94,10 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
         return;
       }
 
-      const collection = await collectionRepo.create(name);
+      const createdById = req.apiAuth?.userId;
+      const collection = await collectionRepo.create(name, createdById);
 
-      logger.info({ collectionId: collection.id, name }, 'Created new collection');
+      logger.info({ collectionId: collection.id, name, createdById }, 'Created new collection');
 
       res.status(201).json({
         id: collection.id,
@@ -110,9 +112,15 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
 
   /**
    * DELETE /api/collections/:id
-   * Delete a collection
+   * Delete a collection (own collections only, or admin)
+   * Tokens cascade delete automatically via Prisma
    */
   router.delete('/:id', async (req: Request, res: Response) => {
+    if (!req.apiAuth) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
     try {
       const collection = await collectionRepo.findById(req.params.id);
 
@@ -121,9 +129,31 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
         return;
       }
 
+      // Check ownership or admin status
+      const user = await prisma.apiUser.findUnique({
+        where: { id: req.apiAuth.userId },
+        select: { isAdmin: true },
+      });
+
+      if (!user) {
+        res.status(403).json({ error: 'User not found' });
+        return;
+      }
+
+      const isOwner = collection.createdById === req.apiAuth.userId;
+      const isAdmin = user.isAdmin;
+
+      if (!isOwner && !isAdmin) {
+        res.status(403).json({
+          error: 'Forbidden',
+          message: 'You can only delete collections you created, unless you are an admin',
+        });
+        return;
+      }
+
       await collectionRepo.delete(req.params.id);
 
-      logger.info({ collectionId: req.params.id }, 'Deleted collection');
+      logger.info({ collectionId: req.params.id, deletedBy: req.apiAuth.userId }, 'Deleted collection');
 
       res.status(204).send();
     } catch (error: any) {
@@ -148,7 +178,7 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
           description: collectionMcp.mcp.description,
           version: collectionMcp.mcp.version,
           stateless: collectionMcp.mcp.stateless,
-          auth_strategy: collectionMcp.authStrategy,
+          auth_strategy: collectionMcp.mcp.authStrategy,
           token_cost: collectionMcp.mcp.tokenCost,
           permissions: {
             allowed_tools: JSON.parse(collectionMcp.allowedTools),
@@ -177,7 +207,7 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
       }
 
       // Validate MCP config
-      const mcpConfig = UpstreamConfigSchema.parse(req.body);
+      const mcpConfig = UpstreamMCPConfigSchema.parse(req.body);
 
       // Find or create master MCP
       let mcp = await mcpRepo.findByNamespace(mcpConfig.namespace);
@@ -204,16 +234,15 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
         return;
       }
 
-      // Add MCP to collection with auth strategy and permissions
+      // Add MCP to collection with permissions (auth strategy is now on master MCP)
       const collectionMcp = await collectionRepo.addMcp(
         req.params.id,
         mcp.id,
-        mcpConfig.auth_strategy,
         mcpConfig.permissions
       );
 
       logger.info(
-        { collectionId: req.params.id, namespace: mcpConfig.namespace, authStrategy: mcpConfig.auth_strategy },
+        { collectionId: req.params.id, namespace: mcpConfig.namespace, authStrategy: mcp.authStrategy },
         'Added MCP to collection'
       );
 
@@ -224,7 +253,7 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
         description: mcp.description,
         version: mcp.version,
         stateless: mcp.stateless,
-        auth_strategy: collectionMcp.authStrategy,
+        auth_strategy: mcp.authStrategy,
         token_cost: mcp.tokenCost,
         permissions: {
           allowed_tools: JSON.parse(collectionMcp.allowedTools),
@@ -234,7 +263,7 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
       });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
-        res.status(400).json({ error: 'Invalid MCP configuration', details: error.errors });
+        sendZodError(res, error, "Invalid MCP configuration");
         return;
       }
 

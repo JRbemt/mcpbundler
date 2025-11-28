@@ -1,8 +1,11 @@
 import express, { Request, Response, Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, PermissionType } from '@prisma/client';
 import logger from '../../utils/logger.js';
 import { McpRepository } from '../database/repositories/index.js';
+import { hasPermission } from '../middleware/auth.js';
+import { auditApiLog, AuditApiAction } from '../../utils/audit-log.js';
 import { z } from 'zod';
+import { sendZodError } from '../../utils/error-formatter.js';
 
 export function createMcpRoutes(prisma: PrismaClient): Router {
   const router = express.Router();
@@ -19,6 +22,8 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
     version: z.string().optional(),
     stateless: z.boolean().optional(),
     tokenCost: z.number().positive().optional(),
+    authStrategy: z.enum(['MASTER', 'TOKEN_SPECIFIC', 'NONE']).optional(),
+    masterAuthConfig: z.string().optional(),
   });
 
   /**
@@ -38,6 +43,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         version: mcp.version,
         stateless: mcp.stateless,
         token_cost: mcp.tokenCost,
+        auth_strategy: mcp.authStrategy,
         created_at: mcp.createdAt,
         updated_at: mcp.updatedAt,
       })));
@@ -69,6 +75,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         version: mcp.version,
         stateless: mcp.stateless,
         token_cost: mcp.tokenCost,
+        auth_strategy: mcp.authStrategy,
         created_at: mcp.createdAt,
         updated_at: mcp.updatedAt,
       });
@@ -100,6 +107,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         version: mcp.version,
         stateless: mcp.stateless,
         token_cost: mcp.tokenCost,
+        auth_strategy: mcp.authStrategy,
         created_at: mcp.createdAt,
         updated_at: mcp.updatedAt,
       });
@@ -111,9 +119,28 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
 
   /**
    * POST /api/mcps
-   * Create a new master MCP
+   * Create a new master MCP (requires ADD_MCP permission)
    */
   router.post('/', async (req: Request, res: Response) => {
+    if (!req.apiAuth) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    if (!req.apiAuth.isAdmin && !hasPermission(req, PermissionType.ADD_MCP)) {
+      auditApiLog({
+        action: AuditApiAction.AUTH_FAILURE,
+        success: false,
+        errorMessage: 'Insufficient permissions to add MCP',
+      }, req);
+
+      res.status(403).json({
+        error: 'Insufficient permissions',
+        message: 'ADD_MCP permission required',
+      });
+      return;
+    }
+
     try {
       const data = McpSchema.parse(req.body);
 
@@ -126,6 +153,12 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
 
       const mcp = await mcpRepo.create(data);
 
+      auditApiLog({
+        action: AuditApiAction.MCP_CREATE,
+        success: true,
+        details: { mcpId: mcp.id, namespace: mcp.namespace },
+      }, req);
+
       logger.info({ mcpId: mcp.id, namespace: mcp.namespace }, 'Created master MCP');
 
       res.status(201).json({
@@ -137,12 +170,14 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         version: mcp.version,
         stateless: mcp.stateless,
         token_cost: mcp.tokenCost,
+        auth_strategy: mcp.authStrategy,
+        master_auth_config: mcp.masterAuthConfig,
         created_at: mcp.createdAt,
         updated_at: mcp.updatedAt,
       });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
-        res.status(400).json({ error: 'Invalid MCP data', details: error.errors });
+        sendZodError(res, error, "Invalid MCP data");
         return;
       }
 
@@ -179,12 +214,14 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         version: updated.version,
         stateless: updated.stateless,
         token_cost: updated.tokenCost,
+        auth_strategy: updated.authStrategy,
+        master_auth_config: updated.masterAuthConfig,
         created_at: updated.createdAt,
         updated_at: updated.updatedAt,
       });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
-        res.status(400).json({ error: 'Invalid MCP data', details: error.errors });
+        sendZodError(res, error, "Invalid MCP data");
         return;
       }
 

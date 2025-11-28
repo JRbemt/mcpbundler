@@ -1,54 +1,32 @@
-import logger from '../../../utils/logger.js';
-import { BundlerAPIClient } from '../../utils/api-client.js';
-import { readFileSync } from 'fs';
-import { UpstreamAuthConfig } from '../../../config/schemas.js';
+import { BundlerAPIClient, Mcp } from "../../utils/api-client.js";
+import { UpstreamAuthConfig } from "../../../core/config/schemas.js";
+import { banner, BG_COLORS } from "../../utils/print-utils.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { buildAuthOptions } from "../../../utils/upstream-auth.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import logger from "../../../utils/logger.js";
 
 interface AddManualOptions {
   url: string;
   namespace: string;
   stateless: boolean;
   author: string;
-  version: string;
-  description?: string;
-  descriptionFile?: string;
+  mcpVersion: string;
+  description: string;
+  authType?: "MASTER" | "TOKEN_SPECIFIC" | "NONE";
   authBearer?: string;
   authBasic?: string;
   authApikey?: string;
   host: string;
-  token?: string;
+  token: string;
 }
 
 /**
  * Add an MCP manually via URL and metadata
  */
-export async function addManualCommand(options: AddManualOptions): Promise<void> {
-  // TODO: everyone can add?
-  const client = new BundlerAPIClient(options.host, options.token);
+export async function addMcpCommand(options: AddManualOptions): Promise<void> {
 
   try {
-    logger.debug({ serverUrl: options.host }, "Connecting to bundler server");
-    // Validate required fields
-    if (!options.author) {
-      logger.error('Error: --author is required when adding an MCP');
-      throw new Error('Author is required');
-    }
-
-    // Get description from file or flag
-    let description = options.description;
-    if (options.descriptionFile) {
-      try {
-        description = readFileSync(options.descriptionFile, 'utf-8').trim();
-      } catch (error: any) {
-        logger.error(`Failed to read description file: ${error.message}`);
-        throw new Error('Description file read error');
-      }
-    }
-
-    if (!description) {
-      logger.error('Error: Either --description or --description-file is required');
-      throw new Error('Description or description file is required');
-    }
-
     // Parse auth configuration
     let authConfig: UpstreamAuthConfig | undefined;
     const authOptionsCount = [
@@ -58,37 +36,45 @@ export async function addManualCommand(options: AddManualOptions): Promise<void>
     ].filter(Boolean).length;
 
     if (authOptionsCount > 1) {
-      logger.error('Error: Only one auth option can be specified at a time');
-      throw new Error('Multiple auth options specified');
+      console.error("Error: Only one auth option can be specified at a time");
+      process.exit(1);
     }
 
     if (options.authBearer) {
       authConfig = {
-        method: 'bearer',
+        method: "bearer",
         token: options.authBearer,
       };
     } else if (options.authBasic) {
-      const [username, password] = options.authBasic.split(':');
+      const [username, password] = options.authBasic.split(":");
       if (!username || !password) {
-        logger.error('Error: --auth-basic must be in format "username:password"');
-        throw new Error('--auth-basic must be in format "username:password"');
+        console.error("Error: --auth-basic must be in format \"username:password\"");
+        process.exit(1);
       }
       authConfig = {
-        method: 'basic',
+        method: "basic",
         username,
         password,
       };
     } else if (options.authApikey) {
       authConfig = {
-        method: 'api_key',
+        method: "api_key",
         key: options.authApikey,
-        header: 'X-API-Key',
+        header: "X-API-Key",
       };
     }
     const namespace = options.namespace;
     if (!namespace) {
-      logger.error('Error: --namespace is required when adding an MCP');
-      throw new Error('Namespace is required');
+      logger.error("Error: --namespace is required when adding an MCP");
+      process.exit(1);
+    }
+
+    // Determine auth strategy
+    let authStrategy: "MASTER" | "TOKEN_SPECIFIC" | "NONE" = "NONE";
+    if (options.authType) {
+      authStrategy = options.authType;
+    } else if (authConfig) {
+      authStrategy = "MASTER";
     }
 
     // Build upstream config
@@ -96,31 +82,51 @@ export async function addManualCommand(options: AddManualOptions): Promise<void>
       namespace,
       url: options.url,
       author: options.author,
-      description,
-      version: options.version,
+      description: options.description,
+      version: options.mcpVersion,
       stateless: options.stateless ?? false,
+      authStrategy,
+      masterAuthConfig: authConfig ? JSON.stringify(authConfig) : undefined,
     };
 
-    // Add MCP to collection
-    logger.info(`Adding MCP: ${upstreamConfig.namespace}`);
-    logger.info(` - URL: ${upstreamConfig.url}`);
-    logger.info(` - Author: ${upstreamConfig.author}`);
-  } catch (error: any) {
-    logger.error('Failed to add MCP:', error.message);
-    throw error;
-  }
-}
+    const client = new BundlerAPIClient(options.host, options.token);
+    const mcp = await client.createMcp(upstreamConfig);
 
-interface AddOptions {
-  host: string;
-  token?: string;
-}
-/**
- * Add an MCP from a registry (not yet implemented)
- */
-export async function addCommand(registryName: string, options: AddOptions): Promise<void> {
-  logger.info('Registry support is not available yet. Work in progress.');
-  logger.info('Please use a direct HTTP(S) URL instead.');
-  logger.info('Example: mcpbundler manage add https://api.example.com/mcp --namespace files --author "Author Name" --description "MCP description"\n');
-  throw new Error('Registry support not yet implemented');
+    banner(" MCP Server Added ", { bg: BG_COLORS.GREEN });
+    console.group()
+    const tableData = [{
+      Namespace: mcp.namespace,
+      URL: mcp.url,
+      Author: mcp.author,
+      Version: mcp.version,
+      Stateless: mcp.stateless ? "Yes" : "No",
+      "Auth Strategy": mcp.auth_strategy || "NONE",
+      "Master Auth": authConfig ? authConfig.method : "None",
+    }];
+
+    console.table(tableData);
+
+    console.log(`\nDescription: ${mcp.description}`);
+    console.groupEnd()
+    console.log()
+
+    // Display overview
+
+  } catch (error: any) {
+    console.error(`Failed to add MCP: ${error.response?.data?.error || error.message}`);
+
+    if (error.response?.data?.details) {
+      logger.error("\nValidation errors:");
+      if (Array.isArray(error.response.data.details)) {
+        error.response.data.details.forEach((detail: any) => {
+          const field = detail.path?.join(".") || "unknown";
+          console.error(`  - ${field}: ${detail.message}`);
+        });
+      } else {
+        console.error(`  ${JSON.stringify(error.response.data.details, null, 2)}`);
+      }
+    }
+
+    process.exit(1);
+  }
 }

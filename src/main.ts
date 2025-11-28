@@ -1,50 +1,137 @@
 #!/usr/bin/env node
 
 /**
- * Main entry point for the MCP Bundler server
- *
- * This file demonstrates how a manager system would start the server
- * by providing a parsed BundlerConfig object to the startServer function.
+ * Main entry point for this MCP Bundler server application
+ * Sets up environment, database, and starts the server. 
+ * 
+ * This implementation builds also a management API for collections and tokens.
+ * If you want just the bundler, consider using `src/core/bundler.ts` instead (with a custom CollectionResolver implementation).
  */
 
-// Load environment variables from .env file
-// CLI-provided env vars (via PM2) will override these defaults
-import logger from "./utils/logger.js";
-import { config } from 'dotenv';
+import { config } from "dotenv";
 const output = config({
   quiet: true
 });
-logger.info(`.ENV initialized: [${Object.keys(output.parsed ?? {}).join(", ")}]`)
 
-import { BundlerConfigSchema } from "./config/schemas.js";
-import { BundlerServer } from "./core/server.js";
-import { CollectionAuthService } from "./services/auth/collection-auth.js";
-import { PrismaClient } from "@prisma/client";
+import logger from "./utils/logger.js";
+logger.debug(`.ENV initialized: [${Object.keys(output.parsed ?? {}).join(", ")}]`)
+
+import express from "express";
+import { BundlerConfigSchema } from "./core/config/schemas.js";
+import { BundlerServer } from "./core/bundler.js";
+import { CollectionResolver } from "./core/collection-resolver.js";
+import { PrismaClient, PermissionType } from "@prisma/client";
+import { createCollectionRoutes } from "./api/routes/collections.js";
+import { createTokenRoutes } from "./api/routes/tokens.js";
+import { createMcpRoutes } from "./api/routes/mcps.js";
+import { createUserRoutes } from "./api/routes/users.js";
+import { createPermissionRoutes } from "./api/routes/permissions.js";
+import { validateEncryptionKey } from "./utils/encryption.js";
+import { createAuthMiddleware } from "./api/middleware/auth.js";
+import { initializeSystemData, SystemInitConfig } from "./utils/initialize-system.js";
+
+
+const CONFIG = {
+  bundler: {
+    name: "MCP Bundler",
+    version: "0.1.0",
+    host: "0.0.0.0",
+    port: parseInt(process.env.PORT || "3000", 10),
+    concurrency: {
+      max_sessions: 100,
+      idle_timeout_ms: 5 * 60 * 1000,
+    }
+  },
+  resolver: {
+    wildcard: {
+      allow_wildcard_token: process.env.RESOLVER_WILDCARD_ALLOW === "true",
+      wildcard_token: process.env.RESOLVER_WILDCARD_TOKEN || "",
+    }
+  }
+}
+
+/**
+ * Parse comma-separated permission types from environment variable
+ */
+function parsePermissions(value: string | undefined): PermissionType[] {
+  if (!value || value.trim() === "") {
+    return [];
+  }
+
+  const parts = value.split(",").map(p => p.trim()).filter(p => p !== "");
+  const validPermissions: PermissionType[] = [];
+  const invalidPermissions: string[] = [];
+
+  for (const part of parts) {
+    if (Object.values(PermissionType).includes(part as PermissionType)) {
+      validPermissions.push(part as PermissionType);
+    } else {
+      invalidPermissions.push(part);
+    }
+  }
+
+  if (invalidPermissions.length > 0) {
+    logger.warn({ invalidPermissions }, "Invalid permissions in SELF_SERVICE_DEFAULT_PERMISSIONS");
+  }
+
+  return validPermissions;
+}
+
+/**
+ * Build system initialization config from environment variables
+ */
+function buildSystemInitConfig(): SystemInitConfig {
+  return {
+    rootUser: {
+      name: process.env.ROOT_USER_NAME || "Root Administrator",
+      email: process.env.ROOT_USER_EMAIL || "admin@example.com"
+    },
+    selfService: {
+      enabled: process.env.SELF_SERVICE_ENABLED === "true",
+      defaultPermissions: parsePermissions(process.env.SELF_SERVICE_DEFAULT_PERMISSIONS)
+    }
+  };
+}
+
+if (CONFIG.resolver.wildcard.allow_wildcard_token) {
+  if (CONFIG.resolver.wildcard.wildcard_token === undefined) {
+    logger.error("RESOLVER_WILDCARD_ALLOW is true but RESOLVER_WILDCARD_TOKEN is not set");
+    throw new Error("Wildcard token must be configured when RESOLVER_WILDCARD_ALLOW is enabled");
+  }
+  logger.warn(`Wildcard token is enabled - this grants unrestricted access to all pre-authenticated (auth-strategy=MASTER|NONE) MCPs with a single token`);
+  logger.info(`Collection-Wildcard-Token:\"${CONFIG.resolver.wildcard.wildcard_token}\"`)
+}
 
 /**
  * Main execution function
  */
-async function main() {
+export async function main() {
   try {
-    logger.info('Initializing database connection');
+    logger.info("Validating encryption key configuration");
+    const isProduction = process.env.NODE_ENV === "production";
+
+    if (!validateEncryptionKey()) {
+      if (isProduction) {
+        logger.error("ENCRYPTION_KEY validation failed in production environment. Exiting.");
+        process.exit(1);
+      } else {
+        logger.warn("ENCRYPTION_KEY validation failed. Continuing in development mode, but this is INSECURE!");
+      }
+    }
+
+    logger.info("Initializing database connection");
     let databaseUrl = process.env.DATABASE_URL;
 
     if (!databaseUrl) {
       throw new Error("DATABASE_URL environment variable is required. Set it in .env file.");
     }
 
-    let databaseType: "sqlite" | "postgres";
-    if (databaseUrl.startsWith('file:')) {
-      databaseType = "sqlite";
-    } else if (databaseUrl.startsWith('postgresql:')) {
-      databaseType = "postgres";
-    } else {
-      throw Error(`Unsupported DATABASE_URL format, suports: [sqlite, postgres]`);
-    }
+    // Parse and validate the configuration using Zod schema
+    const validatedConfig = BundlerConfigSchema.parse(CONFIG.bundler);
 
     // Create PrismaClient with explicit datasource URL
     const prisma = new PrismaClient({
-      log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+      log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
       datasources: {
         db: {
           url: databaseUrl
@@ -52,62 +139,50 @@ async function main() {
       }
     });
 
+    const resolver = new CollectionResolver(prisma, CONFIG.resolver.wildcard);
+    const bundlerServer = new BundlerServer(validatedConfig, resolver);
+
     // Apply SQLite optimizations for better concurrency
-    if (databaseType === 'sqlite') {
-      await prisma.$queryRawUnsafe('PRAGMA journal_mode=WAL;');
-      await prisma.$queryRawUnsafe('PRAGMA busy_timeout=5000;');
-      logger.info('SQLite configured with WAL mode');
+    const isSqlite = databaseUrl.startsWith("file:");
+    if (isSqlite) {
+      await prisma.$queryRawUnsafe("PRAGMA journal_mode=WAL;");
+      await prisma.$queryRawUnsafe("PRAGMA busy_timeout=5000;");
     }
 
-    logger.info({ databaseType, databaseUrl }, 'Database initialized successfully');
+    // Initialize system data (root user and global settings)
+    const systemConfig = buildSystemInitConfig();
+    await initializeSystemData(prisma, systemConfig);
 
-    const managerProvidedConfig = {
-      name: "MCP Bundler",
-      version: "0.1.0",
-      host: "0.0.0.0",
-      port: parseInt(process.env.PORT || '3000', 10),
-      concurrency: {
-        max_sessions: 100,
-        startup_block_ms: 100
-      },
+    // Mount management API routes BEFORE starting the HTTP server
+    const app = bundlerServer.getApp();
+    const authMiddleware = createAuthMiddleware(prisma);
 
-      // Optional manager integration fields
-      manager: {
-        instance_id: `bundler-${Date.now()}`,
-        // manager_endpoint: "http://localhost:8080/api/v1/bundlers",
-      },
+    const apiRouter = express.Router();
+    apiRouter.use(express.json());
+    // Add request logging middleware for debugging
+    apiRouter.use((req, res, next) => {
+      logger.debug({ method: req.method, path: req.path, url: req.url }, 'Incoming request');
+      next();
+    });
 
-      // Backend configuration
-      backend: {
-        base_url: process.env.BACKEND_URL || "http://localhost:8000",
-      },
+    // Mount routes in correct order
+    // User routes FIRST (they handle auth internally for /self endpoint)
+    apiRouter.use("/users", authMiddleware, createUserRoutes(prisma));
+    apiRouter.use("/collections", authMiddleware, createCollectionRoutes(prisma));
+    apiRouter.use("/tokens", authMiddleware, createTokenRoutes(prisma));
+    apiRouter.use("/mcps", authMiddleware, createMcpRoutes(prisma));
+    apiRouter.use("/permissions", authMiddleware, createPermissionRoutes(prisma));
+    app.use("/api", apiRouter);
 
-      // Metering configuration
-      metering: {
-        enabled: false,
-        service_token: process.env.BUNDLER_SERVICE_TOKEN,
-        flush_interval_ms: 10000,
-        batch_size: 100,
-      }
-    };
-
-    logger.info({ config: managerProvidedConfig }, "Starting server with configuration");
-
-    // Parse and validate the configuration using Zod schema
-    const validatedConfig = BundlerConfigSchema.parse(managerProvidedConfig);
-
-    // Initialize services with database dependency
-    const authService = new CollectionAuthService(prisma);
-
-    const bundlerServer = new BundlerServer(validatedConfig, authService, prisma);
-    const { httpServer, mcpServer, shutdown: shutdownFn } = await bundlerServer.start();
+    // Start the HTTP server after all routes are mounted
+    const { shutdown: shutdownFn } = await bundlerServer.start();
 
     // Setup graceful shutdown handlers
     const handleShutdown = async (signal: string) => {
       logger.info({ signal }, "Received shutdown signal");
       try {
         await shutdownFn();
-        logger.info('Disconnecting from database');
+        logger.info("Disconnecting from database");
         await prisma.$disconnect();
         logger.info({ msg: "Server shutdown completed successfully" });
         process.exit(0);
@@ -117,32 +192,24 @@ async function main() {
       }
     };
 
-    process.on('SIGINT', () => handleShutdown('SIGINT'));
-    process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+    process.on("SIGINT", () => handleShutdown("SIGINT"));
+    process.on("SIGTERM", () => handleShutdown("SIGTERM"));
 
     // Handle uncaught exceptions and unhandled rejections
-    process.on('uncaughtException', (error) => {
+    process.on("uncaughtException", (error) => {
       logger.error({ error }, "Uncaught exception");
       process.exit(1);
     });
 
-    process.on('unhandledRejection', (reason, promise) => {
+    process.on("unhandledRejection", (reason, promise) => {
       logger.error({ reason, promise }, "Unhandled promise rejection");
       process.exit(1);
     });
 
     logger.info({
-      msg: 'Server startup complete, ready to accept connections',
-      instanceId: validatedConfig.manager?.instance_id,
+      msg: "Server startup complete, ready to accept connections",
       pid: process.pid
     });
-
-    // Optional: Report to manager system that server is ready
-    if (validatedConfig.manager?.manager_endpoint) {
-      logger.info({
-        managerEndpoint: validatedConfig.manager.manager_endpoint
-      }, "Manager endpoint configured - health reporting could be implemented here");
-    }
 
   } catch (error) {
     console.log(error);

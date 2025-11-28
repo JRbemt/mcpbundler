@@ -1,22 +1,13 @@
 /// @vitest-ignore
 import pino from 'pino';
 import { fileURLToPath } from 'url';
-import { dirname, join, resolve, relative } from 'path';
-import { mkdirSync, existsSync } from 'fs';
+import { dirname, resolve, relative } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Get the project root directory (2 levels up from utils/)
 const projectRoot = resolve(__dirname, '..', '..');
-
-// log file path
-const logsDir = join(__dirname, 'logs');
-const logFile = join(logsDir, 'app.log');
-
-if (!existsSync(logsDir)) {
-    mkdirSync(logsDir, { recursive: true });
-}
 
 /**
  * Custom caller detection function
@@ -87,26 +78,24 @@ function getCallerInfo(): string {
 }
 
 /**
+ * Detect if running under PM2
+ */
+const isRunningUnderPM2 = !!process.env.PM2_HOME || process.env.pm_id !== undefined;
+
+/**
  * Logger setup with custom caller information
+ * In PM2 mode: plain JSON output for PM2 log capture
+ * In dev mode: colorized pretty output for local development
  */
 const transport = pino.transport({
-    targets: [
-        {
-            target: 'pino-pretty', // pretty print to console
-            options: {
-                colorize: true, // TODO:DISABLE on pm2 logs?
-                translateTime: 'SYS:HH:MM:ss',
-                ignore: 'pid,hostname,caller',
-                messageFormat: '[{caller}] {msg}',
-            },
-            level: 'info'
-        },
-        {
-            target: 'pino/file',   // raw JSON logs to file
-            options: { destination: logFile },
-            level: 'debug'
-        }
-    ]
+    target: 'pino-pretty',
+    options: {
+        colorize: !isRunningUnderPM2,
+        translateTime: 'SYS:HH:MM:ss',
+        ignore: 'pid,hostname,caller',
+        messageFormat: '[{caller}] {msg}',
+    },
+    level: 'info'
 });
 
 const baseLogger = pino(
@@ -180,7 +169,6 @@ class LoggerWithCaller {
         return new LoggerWithCaller(this.logger.child(options));
     }
 }
-//TODO: prototype overwrite, callsites package
 const logger = new LoggerWithCaller(baseLogger);
 
 export default logger;

@@ -7,7 +7,7 @@ import {
   McpCredentialRepository,
   McpRepository,
 } from '../database/repositories/index.js';
-import { UpstreamAuthConfigSchema } from '../../config/schemas.js';
+import { UpstreamAuthConfigSchema } from '../../core/config/schemas.js';
 import { z } from 'zod';
 
 export function createTokenRoutes(prisma: PrismaClient): Router {

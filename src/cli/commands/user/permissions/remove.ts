@@ -1,0 +1,34 @@
+import { BundlerAPIClient } from "../../../utils/api-client.js";
+import { banner, BG_COLORS } from "../../../utils/print-utils.js";
+
+interface RemoveOptions {
+  token: string;
+  host: string;
+}
+
+export async function removeCommand(username: string, permission: string, options: RemoveOptions): Promise<void> {
+  try {
+    const client = new BundlerAPIClient(options.host, options.token);
+    const result = await client.removePermission(username, permission);
+
+    banner("Permission Removed", { bg: BG_COLORS.RED });
+
+    const tableData = [{
+      User: result.user.name,
+      Permission: result.permission,
+      "Affected Users": result.affected_users,
+    }];
+
+    console.table(tableData);
+
+    if (result.affected_users > 1) {
+      console.log(`\n  ⚠️  Permission cascaded and removed from ${result.affected_users} user(s) (including descendants)`);
+    }
+  } catch (error: any) {
+    console.error(`Error removing permission: ${error.response?.data?.error || error.message}`);
+    if (error.response?.data?.message) {
+      console.error(`Details: ${error.response.data.message}`);
+    }
+    process.exit(1);
+  }
+}

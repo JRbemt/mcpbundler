@@ -18,14 +18,13 @@
  * }
  */
 
-import { Command } from "commander";
-import { StdioToSseBridge } from "../../bridge/stdio-bridge.js";
+import { StdioToSseBridge } from "./bridge/stdio-bridge.js";
 import logger from "../../../utils/logger.js";
 
 interface ClientConnectOptions {
+  name: string;
   host: string;
-  token: string;
-  name?: string;
+  collection?: string;
 }
 
 export async function clientConnectCommand(options: ClientConnectOptions): Promise<void> {
@@ -42,10 +41,8 @@ export async function clientConnectCommand(options: ClientConnectOptions): Promi
     // Create and start bridge
     const bridge = new StdioToSseBridge({
       bundlerUrl: bundlerUrl.origin,
-      token: options.token,
-      serverInfo: options.name
-        ? { name: options.name, version: "1.0.0" }
-        : undefined,
+      token: options.collection,
+      serverInfo: { name: options.name, version: "1.0.0" }
     });
 
     // Setup graceful shutdown handlers

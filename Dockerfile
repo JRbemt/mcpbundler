@@ -27,7 +27,7 @@ WORKDIR /app
 # Install runtime system dependencies
 RUN apk add --no-cache openssl wget
 
-# Create app user 
+# Create app user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
@@ -40,9 +40,11 @@ COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
 COPY --chown=nodejs:nodejs ./scripts ./scripts
 RUN chmod +x ./scripts/docker-entrypoint.sh
 
-
 # Switch to non-root user
 USER nodejs
+
+# Install pm2-logrotate module using local PM2
+RUN npx pm2 install pm2-logrotate && npx pm2 kill
 
 # Expose application port
 EXPOSE 3000

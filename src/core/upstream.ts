@@ -1,17 +1,14 @@
 import EventEmitter from "events";
-import { UpstreamConfig } from "../config/schemas.js";
+import { UpstreamConfig } from "./config/schemas.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import logger from "../utils/logger.js";
+import { buildAuthOptions } from "../utils/upstream-auth.js";
 import { z } from "zod";
 import {
     Progress,
-    Tool,
     Resource,
-    Prompt,
-    ResourceTemplate,
     CallToolRequest,
-    CallToolResult,
     CallToolResultSchema,
     CompatibilityCallToolResultSchema,
     ReadResourceResult,
@@ -21,7 +18,6 @@ import {
     ResourceListChangedNotificationSchema,
     PromptListChangedNotificationSchema,
     ReadResourceRequest,
-    ReadResourceResultSchema,
     ListPromptsRequest,
     ListPromptsResult,
     ListResourcesResult,
@@ -33,7 +29,6 @@ import {
     ListToolsRequest
 } from "@modelcontextprotocol/sdk/types.js";
 import { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import { buildAuthOptions } from "../utils/upstream-auth.js";
 import { cached, CacheManager } from "../utils/cacheable.js"
 
 export const UPSTREAM_EVENTS = {
@@ -68,10 +63,11 @@ export class Upstream extends EventEmitter {
     private retryAttempts = 0;
 
     // Cache infrastructure with LRU limits
-    private tools = new CacheManager<ListToolsResult>();
-    private resources = new CacheManager<ListResourcesResult>();
-    private resourceTemplates = new CacheManager<ListResourceTemplatesResult>();
-    private prompts = new CacheManager<ListPromptsResult>();
+    // NO chaching for now yet
+    private tools = new CacheManager<ListToolsResult>({ max: 0 });
+    private resources = new CacheManager<ListResourcesResult>({ max: 0 });
+    private resourceTemplates = new CacheManager<ListResourceTemplatesResult>({ max: 0 });
+    private prompts = new CacheManager<ListPromptsResult>({ max: 0 });
 
 
     constructor(config: UpstreamConfig) {
@@ -100,7 +96,7 @@ export class Upstream extends EventEmitter {
             ToolListChangedNotificationSchema,
             async () => {
                 logger.info({ namespace: this.getNamespace() },
-                    'Upstream tools list changed');
+                    "Upstream tools list changed");
                 this.tools.invalidate();
                 this.emit(UPSTREAM_EVENTS.TOOLS_LIST_CHANGED);
             }
@@ -111,7 +107,7 @@ export class Upstream extends EventEmitter {
             ResourceListChangedNotificationSchema,
             async () => {
                 logger.info({ namespace: this.getNamespace() },
-                    'Upstream resources list changed');
+                    "Upstream resources list changed");
                 this.resources.invalidate();
                 this.resourceTemplates.invalidate();
                 this.emit(UPSTREAM_EVENTS.RESOURCES_LIST_CHANGED);
@@ -123,7 +119,7 @@ export class Upstream extends EventEmitter {
             PromptListChangedNotificationSchema,
             async () => {
                 logger.info({ namespace: this.getNamespace() },
-                    'Upstream prompts list changed');
+                    "Upstream prompts list changed");
                 this.prompts.invalidate();
                 this.emit(UPSTREAM_EVENTS.PROMPTS_LIST_CHANGED);
             }
@@ -197,7 +193,7 @@ export class Upstream extends EventEmitter {
             logger.info({
                 namespace: this.getNamespace(),
                 url: this.getUrl(),
-                authMethod: this.config.auth?.method || 'none'
+                authMethod: this.config.auth?.method || "none"
             }, "upstream successfully connected");
             this.emit(UPSTREAM_EVENTS.CONNECTED, this);
         } catch (e) {
@@ -205,7 +201,7 @@ export class Upstream extends EventEmitter {
             logger.error({
                 namespace: this.getNamespace(),
                 url: this.getUrl(),
-                authMethod: this.config.auth?.method || 'none'
+                authMethod: this.config.auth?.method || "none"
             }, "failed to connect to upstream");
 
             this.emit(UPSTREAM_EVENTS.CONNECTION_FAILED, this);
@@ -268,9 +264,8 @@ export class Upstream extends EventEmitter {
      * List tools with caching
      * Returns cached tools if valid, otherwise fetches from upstream
      */
-    @cached((instance: Upstream) => instance.tools, () => "")
+    //@cached((instance: Upstream) => instance.tools, () => "")
     async listTools(params?: ListToolsRequest["params"], options?: RequestOptions): Promise<ListToolsResult> {
-        logger.info("LISTING TOOLS")
         return await this.client.listTools(params, options);
     }
 
@@ -290,7 +285,7 @@ export class Upstream extends EventEmitter {
      * List resources with caching
      * Returns cached resources if valid, otherwise fetches from upstream
      */
-    @cached((instance: Upstream) => instance.resources, () => "")
+    //@cached((instance: Upstream) => instance.resources, () => "")
     async listResources(params?: ListResourcesRequest["params"], options?: RequestOptions): Promise<{ resources: Resource[] }> {
         return await this.client.listResources(params, options);
     }
@@ -311,7 +306,7 @@ export class Upstream extends EventEmitter {
      * List prompts with caching
      * Returns cached prompts if valid, otherwise fetches from upstream
      */
-    @cached((instance: Upstream) => instance.prompts, () => "")
+    //@cached((instance: Upstream) => instance.prompts, () => "")
     async listPrompts(params?: ListPromptsRequest["params"], options?: RequestOptions): Promise<ListPromptsResult> {
         return await this.client.listPrompts(params, options);
     }
@@ -331,7 +326,7 @@ export class Upstream extends EventEmitter {
      * List resourceTemplates with caching
      * Returns cached resourceTemplates if valid, otherwise fetches from upstream
      */
-    @cached((instance: Upstream) => instance.resourceTemplates, () => "")
+    //@cached((instance: Upstream) => instance.resourceTemplates, () => "")
     async listResourceTemplates(params?: ListResourceTemplatesRequest["params"], options?: RequestOptions): Promise<ListResourceTemplatesResult> {
         return await this.client.listResourceTemplates(params, options);
     }
@@ -377,15 +372,24 @@ export class Upstream extends EventEmitter {
             this.retryTimer = undefined;
         }
 
+        // Clear transport event handlers to prevent reconnection attempts
+        if (this.transport) {
+            this.transport.onclose = undefined;
+            this.transport.onerror = undefined;
+        }
+
         // Clear caches (helps with garbage collection)
         this.invalidateAllCaches();
+
+        // Emit shutdown event
+        this.emit(UPSTREAM_EVENTS.SHUTDOWN);
 
         // Close the client
         await this.client.close();
     }
 }
 /**
- * A pool for obtaining instances of stateless MCP's
+ * A pool for obtaining instances of stateless MCP"s
  */
 export class UpstreamPool {
 

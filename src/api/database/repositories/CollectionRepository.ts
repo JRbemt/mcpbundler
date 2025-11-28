@@ -1,5 +1,5 @@
 import { PrismaClient, Prisma, CollectionMcp, AuthStrategy } from '@prisma/client';
-import { CollectionResponse, McpPermissions } from '../../../config/schemas.js';
+import { CollectionResponse, McpPermissions } from '../../../core/config/schemas.js';
 
 /**
  * Collection with nested CollectionMcp and Mcp details
@@ -31,10 +31,11 @@ export class CollectionRepository {
   /**
    * Create a new collection
    */
-  async create(name: string): Promise<CollectionWithMcps> {
+  async create(name: string, createdById?: string): Promise<CollectionWithMcps> {
     return await this.prisma.collection.create({
       data: {
         name,
+        createdById,
       },
       include: {
         collectionMcps: {
@@ -105,7 +106,7 @@ export class CollectionRepository {
         description: collectionMcp.mcp.description,
         version: collectionMcp.mcp.version,
         stateless: collectionMcp.mcp.stateless,
-        auth_strategy: collectionMcp.authStrategy,
+        auth_strategy: collectionMcp.mcp.authStrategy,
         auth: undefined, // Resolved at runtime based on auth_strategy
         token_cost: collectionMcp.mcp.tokenCost,
         permissions: {
@@ -118,12 +119,11 @@ export class CollectionRepository {
   }
 
   /**
-   * Add MCP to collection with auth strategy and permissions
+   * Add MCP to collection with permissions (auth strategy is now on master MCP)
    */
   async addMcp(
     collectionId: string,
     mcpId: string,
-    authStrategy?: AuthStrategy,
     permissions?: McpPermissions
   ): Promise<CollectionMcp> {
     const allowedTools = permissions?.allowed_tools ?? ['*'];
@@ -134,7 +134,6 @@ export class CollectionRepository {
       data: {
         collectionId,
         mcpId,
-        authStrategy: authStrategy ?? 'MASTER',
         allowedTools: JSON.stringify(allowedTools),
         allowedResources: JSON.stringify(allowedResources),
         allowedPrompts: JSON.stringify(allowedPrompts),
@@ -187,19 +186,14 @@ export class CollectionRepository {
   }
 
   /**
-   * Update MCP configuration in collection (auth strategy and permissions)
+   * Update MCP permissions in collection (auth strategy is now on master MCP)
    */
   async updateMcpConfig(
     collectionId: string,
     mcpId: string,
-    authStrategy?: AuthStrategy,
     permissions?: McpPermissions
   ): Promise<CollectionMcp> {
     const updateData: any = {};
-
-    if (authStrategy !== undefined) {
-      updateData.authStrategy = authStrategy;
-    }
 
     if (permissions !== undefined) {
       if (permissions.allowed_tools !== undefined) {
