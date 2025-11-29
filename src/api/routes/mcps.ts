@@ -7,6 +7,60 @@ import { auditApiLog, AuditApiAction } from '../../utils/audit-log.js';
 import { z } from 'zod';
 import { sendZodError } from '../../utils/error-formatter.js';
 
+/**
+ * Check if user has permission to delete an MCP
+ * Permission granted if:
+ * - User is the creator of the MCP
+ * - User is an admin
+ * - User is the creator of the creator (recursively)
+ */
+async function checkMcpDeletePermission(
+  user: any,
+  mcp: any,
+  prisma: PrismaClient
+): Promise<boolean> {
+  // Admin can delete anything
+  if (user.isAdmin) {
+    return true;
+  }
+
+  // Check if user is direct creator
+  if (mcp.createdById === user.id) {
+    return true;
+  }
+
+  // Check creator hierarchy recursively
+  if (mcp.createdById) {
+    let currentCreatorId = mcp.createdById;
+    const visited = new Set<string>([currentCreatorId]);
+
+    while (currentCreatorId) {
+      const creator = await prisma.apiUser.findUnique({
+        where: { id: currentCreatorId },
+        select: { createdById: true }
+      });
+
+      if (!creator || !creator.createdById) {
+        break;
+      }
+
+      if (creator.createdById === user.id) {
+        return true;
+      }
+
+      // Prevent infinite loops
+      if (visited.has(creator.createdById)) {
+        break;
+      }
+
+      visited.add(creator.createdById);
+      currentCreatorId = creator.createdById;
+    }
+  }
+
+  return false;
+}
+
 export function createMcpRoutes(prisma: PrismaClient): Router {
   const router = express.Router();
   const mcpRepo = new McpRepository(prisma);
@@ -122,12 +176,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
    * Create a new master MCP (requires ADD_MCP permission)
    */
   router.post('/', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
-    if (!req.apiAuth.isAdmin && !hasPermission(req, PermissionType.ADD_MCP)) {
+    if (!req.apiAuth!.isAdmin && !hasPermission(req, PermissionType.ADD_MCP)) {
       auditApiLog({
         action: AuditApiAction.AUTH_FAILURE,
         success: false,
@@ -151,7 +200,10 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         return;
       }
 
-      const mcp = await mcpRepo.create(data);
+      const mcp = await mcpRepo.create({
+        ...data,
+        createdById: req.apiAuth!.userId
+      });
 
       auditApiLog({
         action: AuditApiAction.MCP_CREATE,
@@ -231,21 +283,79 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
   });
 
   /**
-   * DELETE /api/mcps/:id
+   * DELETE /api/mcps (bulk delete - all user's MCPs)
+   */
+  router.delete('/', async (req: Request, res: Response) => {
+    try {
+      // Find all MCPs created by this user
+      const userMcps = await prisma.mcp.findMany({
+        where: { createdById: req.apiAuth!.userId }
+      });
+
+      const namespaces = userMcps.map(m => m.namespace);
+
+      // Delete all
+      await prisma.mcp.deleteMany({
+        where: { createdById: req.apiAuth!.userId }
+      });
+
+      auditApiLog({
+        action: AuditApiAction.MCP_DELETE,
+        success: true,
+        details: { count: userMcps.length, namespaces },
+      }, req);
+
+      logger.info(
+        { userId: req.apiAuth!.userId, count: userMcps.length },
+        'Bulk deleted user MCPs'
+      );
+
+      res.json({
+        deleted: userMcps.length,
+        mcps: namespaces
+      });
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Failed to bulk delete MCPs');
+      res.status(500).json({ error: 'Failed to bulk delete MCPs' });
+    }
+  });
+
+  /**
+   * DELETE /api/mcps/:namespace
    * Delete a master MCP (cascades to all collection instances)
    */
-  router.delete('/:id', async (req: Request, res: Response) => {
+  router.delete('/:namespace', async (req: Request, res: Response) => {
     try {
-      const mcp = await mcpRepo.findById(req.params.id);
+      const mcp = await mcpRepo.findByNamespace(req.params.namespace);
 
       if (!mcp) {
         res.status(404).json({ error: 'MCP not found' });
         return;
       }
 
-      await mcpRepo.delete(req.params.id);
+      // Permission check: must be creator, admin, or creator of creator
+      const hasPermission = await checkMcpDeletePermission(req.apiAuth, mcp, prisma);
 
-      logger.info({ mcpId: req.params.id }, 'Deleted master MCP');
+      if (!hasPermission) {
+        auditApiLog({
+          action: AuditApiAction.AUTH_FAILURE,
+          success: false,
+          errorMessage: 'Insufficient permissions to delete MCP',
+        }, req);
+
+        res.status(403).json({ error: 'Forbidden: You do not have permission to delete this MCP' });
+        return;
+      }
+
+      await mcpRepo.delete(req.params.namespace);
+
+      auditApiLog({
+        action: AuditApiAction.MCP_DELETE,
+        success: true,
+        details: { namespace: req.params.namespace },
+      }, req);
+
+      logger.info({ namespace: req.params.namespace, userId: req.apiAuth!.userId }, 'Deleted MCP');
 
       res.status(204).send();
     } catch (error: any) {

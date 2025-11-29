@@ -13,8 +13,8 @@ export async function revokeSelfCommand(options: RevokeSelfOptions): Promise<voi
 
     banner("API Key Revoked", { bg: BG_COLORS.RED });
 
-    console.log(`\n  Revoked at: ${new Date(result.revoked_at).toLocaleString()}`);
-    console.log(`\n  ⚠️  Your API key is now invalid and cannot be used.`);
+    console.log(`Revoked at: ${new Date(result.revoked_at).toLocaleString()}`);
+    console.log(`Your API key is now invalid and cannot be used.`);
   } catch (error: any) {
     console.error(`Error revoking key: ${error.response?.data?.error || error.message}`);
     process.exit(1);

@@ -24,6 +24,7 @@ export async function listCommand(options: ListOptions): Promise<void> {
       Created: new Date(user.created_at).toLocaleString(),
       "Last Used": user.last_used_at ? new Date(user.last_used_at).toLocaleString() : "N/A",
       Revoked: user.revoked_at ? new Date(user.revoked_at).toLocaleString() : "N/A",
+      "Created By": user.created_by || "N/A",
     }));
 
     console.log(`\nFound ${users.length} user(s):\n`);

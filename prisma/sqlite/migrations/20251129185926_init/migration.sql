@@ -3,7 +3,9 @@ CREATE TABLE "collections" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME NOT NULL
+    "updated_at" DATETIME NOT NULL,
+    "created_by_id" TEXT,
+    CONSTRAINT "collections_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "api_user" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -19,7 +21,9 @@ CREATE TABLE "mcps" (
     "auth_strategy" TEXT NOT NULL DEFAULT 'NONE',
     "master_auth_config" TEXT,
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME NOT NULL
+    "updated_at" DATETIME NOT NULL,
+    "created_by_id" TEXT,
+    CONSTRAINT "mcps_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "api_user" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -33,21 +37,6 @@ CREATE TABLE "collection_mcps" (
     "allowed_prompts" TEXT NOT NULL DEFAULT '["*"]',
     CONSTRAINT "collection_mcps_collection_id_fkey" FOREIGN KEY ("collection_id") REFERENCES "collections" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "collection_mcps_mcp_id_fkey" FOREIGN KEY ("mcp_id") REFERENCES "mcps" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-);
-
--- CreateTable
-CREATE TABLE "oauth_credentials" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "token_mcp_credential_id" TEXT,
-    "token_id" TEXT,
-    "provider" TEXT NOT NULL,
-    "access_token" TEXT NOT NULL,
-    "refresh_token" TEXT,
-    "expires_at" DATETIME,
-    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME NOT NULL,
-    CONSTRAINT "oauth_credentials_token_mcp_credential_id_fkey" FOREIGN KEY ("token_mcp_credential_id") REFERENCES "collection_token_mcp_credentials" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "oauth_credentials_token_id_fkey" FOREIGN KEY ("token_id") REFERENCES "collection_tokens" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -107,7 +96,13 @@ CREATE TABLE "global_settings" (
 );
 
 -- CreateIndex
+CREATE INDEX "collections_created_by_id_idx" ON "collections"("created_by_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "mcps_namespace_key" ON "mcps"("namespace");
+
+-- CreateIndex
+CREATE INDEX "mcps_created_by_id_idx" ON "mcps"("created_by_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "collection_mcps_collection_id_mcp_id_key" ON "collection_mcps"("collection_id", "mcp_id");

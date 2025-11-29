@@ -1,25 +1,26 @@
 import express, { Request, Response, Router } from 'express';
 import { PrismaClient, PermissionType } from '@prisma/client';
 import logger from '../../utils/logger.js';
-import { ApiKeyRepository } from '../database/repositories/index.js';
+import { ApiUserRepository } from '../database/repositories/index.js';
 import { hasPermission, isAdmin } from '../middleware/auth.js';
 import { auditApiLog, AuditApiAction } from '../../utils/audit-log.js';
 import { z } from 'zod';
 import { sendZodError } from '../../utils/error-formatter.js';
+import { RequestHandler } from 'express-serve-static-core';
 
-export function createPermissionRoutes(prisma: PrismaClient): Router {
+export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: PrismaClient): Router {
   const router = express.Router();
-  const apiUserRepo = new ApiKeyRepository(prisma);
+  const apiUserRepo = new ApiUserRepository(prisma);
 
   const AddPermissionSchema = z.object({
     permission: z.nativeEnum(PermissionType),
     propagate: z.boolean().optional().default(false),
   });
 
-  /**
-   * GET /api/permissions/types
-   * List all available permission types (public endpoint)
-   */
+  /*
+  * GET /api/permissions
+  * List all available permission types
+  */
   router.get('/', async (req: Request, res: Response) => {
     res.json({
       permissions: Object.values(PermissionType),
@@ -27,22 +28,18 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
         CREATE_USER: 'Allows creating new users with permissions they possess',
         ADD_MCP: 'Allows adding new MCPs to the system',
         LIST_USERS: 'Allows listing all users in the system',
+        VIEW_PERMISSIONS: 'Allows checking other users permissions'
       },
     });
   });
-
+  router.use(authMiddleware);
   /**
    * GET /api/permissions/me
    * Get own permissions
    */
   router.get('/me', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     try {
-      const user = await apiUserRepo.getWithPermissions(req.apiAuth.userId);
+      const user = await apiUserRepo.getWithPermissions(req.apiAuth!.userId);
 
       if (!user) {
         res.status(404).json({ error: 'User not found' });
@@ -66,21 +63,17 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
    * Get permissions for a specific user by name (admin only)
    */
   router.get('/by-name/:name', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
 
-    if (!isAdmin(req)) {
+    if (!isAdmin(req) && !hasPermission(req, PermissionType.VIEW_PERMISSIONS)) {
       auditApiLog({
         action: AuditApiAction.AUTH_FAILURE,
         success: false,
-        errorMessage: 'Admin required to view other user permissions',
+        errorMessage: 'Insufficient permissions to view permissions',
       }, req);
 
       res.status(403).json({
-        error: 'Admin required',
-        message: 'Only admins can view other users\' permissions',
+        error: 'Insufficient permissions',
+        message: 'VIEW_PERMISSIONS permission required',
       });
       return;
     }
@@ -115,11 +108,6 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
    * Add permission to user (requires granter to have the permission)
    */
   router.post('/by-name/:name', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     try {
       const validatedData = AddPermissionSchema.parse(req.body);
 
@@ -131,7 +119,7 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
       }
 
       const canGrant = await apiUserRepo.canGrantPermissions(
-        req.apiAuth.userId,
+        req.apiAuth!.userId,
         [validatedData.permission]
       );
 
@@ -153,7 +141,7 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
       const affectedCount = await apiUserRepo.addPermission(
         targetUser.id,
         validatedData.permission,
-        req.apiAuth.userId,
+        req.apiAuth!.userId,
         validatedData.propagate
       );
 
@@ -164,7 +152,7 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
           targetUserId: targetUser.id,
           targetUserName: targetUser.name,
           permission: validatedData.permission,
-          grantedBy: req.apiAuth.userId,
+          grantedBy: req.apiAuth!.userId,
           propagate: validatedData.propagate,
           affectedUsers: affectedCount,
         },
@@ -198,11 +186,6 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
    * Non-admins can only revoke permissions they have from users they created
    */
   router.delete('/by-name/:name/:permission', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     try {
       const permission = req.params.permission as PermissionType;
 
@@ -222,7 +205,7 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
       }
 
       if (!isAdmin(req)) {
-        const revoker = await apiUserRepo.getWithPermissions(req.apiAuth.userId);
+        const revoker = await apiUserRepo.getWithPermissions(req.apiAuth!.userId);
 
         if (!revoker) {
           res.status(403).json({ error: 'User not found' });
@@ -245,7 +228,7 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
           return;
         }
 
-        if (targetUser.createdById !== req.apiAuth.userId) {
+        if (targetUser.createdById !== req.apiAuth!.userId) {
           auditApiLog({
             action: AuditApiAction.AUTH_FAILURE,
             success: false,
@@ -270,7 +253,7 @@ export function createPermissionRoutes(prisma: PrismaClient): Router {
           targetUserId: targetUser.id,
           targetUserName: targetUser.name,
           permission,
-          removedBy: req.apiAuth.userId,
+          removedBy: req.apiAuth!.userId,
           affectedUsers: affectedCount,
         },
       }, req);

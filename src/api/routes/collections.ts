@@ -116,11 +116,6 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
    * Tokens cascade delete automatically via Prisma
    */
   router.delete('/:id', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     try {
       const collection = await collectionRepo.findById(req.params.id);
 
@@ -131,7 +126,7 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
 
       // Check ownership or admin status
       const user = await prisma.apiUser.findUnique({
-        where: { id: req.apiAuth.userId },
+        where: { id: req.apiAuth!.userId },
         select: { isAdmin: true },
       });
 
@@ -140,7 +135,7 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
         return;
       }
 
-      const isOwner = collection.createdById === req.apiAuth.userId;
+      const isOwner = collection.createdById === req.apiAuth!.userId;
       const isAdmin = user.isAdmin;
 
       if (!isOwner && !isAdmin) {
@@ -153,7 +148,7 @@ export function createCollectionRoutes(prisma: PrismaClient): Router {
 
       await collectionRepo.delete(req.params.id);
 
-      logger.info({ collectionId: req.params.id, deletedBy: req.apiAuth.userId }, 'Deleted collection');
+      logger.info({ collectionId: req.params.id, deletedBy: req.apiAuth!.userId }, 'Deleted collection');
 
       res.status(204).send();
     } catch (error: any) {

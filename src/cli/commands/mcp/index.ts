@@ -22,7 +22,7 @@ export function createMcpsCommand(): Command {
     .requiredOption("--url <url>", "URL of the MCP server")
     .requiredOption("--author <author>", "Author of the MCP server")
     .requiredOption("--description <description>", "Description of the MCP server")
-    .option("-v, --mcp-version <version>", "Version of the MCP server", "1.0.0")
+    .option("-v, --mcp-version [version]", "Version of the MCP server", "1.0.0")
     .option("--stateless", "Mark as stateless (shared connection)", false)
     .addOption(new Option("--auth-type <type>", "Which auth credentials are used by collections accessing the MCP").choices(["MASTER", "NONE", "TOKEN_SPECIFIC"]).default("NONE"))
     .option("--auth-bearer [token]", "Bearer token authentication (optional)")
@@ -42,8 +42,9 @@ export function createMcpsCommand(): Command {
     });
 
   command
-    .command("remove <namespace>")
-    .description("remove an MCP server by namespace (requires valid token)")
+    .command("remove [namespace]")
+    .description("remove an MCP server (requires valid token)")
+    .option("--all", "Remove all MCPs created by you")
     .action((namespace, options, command) => {
       const globalOpts = command.parent.parent.opts();
       removeMcpCommand(namespace, { ...options, ...globalOpts });

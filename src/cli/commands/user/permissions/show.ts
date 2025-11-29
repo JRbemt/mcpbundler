@@ -19,19 +19,21 @@ export async function showCommand(username: string | undefined, options: ShowOpt
       const result = await client.getUserPermissions(username);
 
       banner(`Permissions for ${result.user_name}`, { bg: BG_COLORS.CYAN });
-
-      console.log(`\n  Admin: ${result.is_admin}`);
+      console.group()
+      console.log(`Admin: ${result.is_admin}`);
 
       if (result.permissions.length > 0) {
-        console.log(`\n=== Permissions (${result.permissions.length}) ===\n`);
+        console.log(`Permissions (${result.permissions.length}):`);
         const tableData = result.permissions.map((perm, index) => ({
           "#": index + 1,
           Permission: perm.permission,
         }));
         console.table(tableData);
       } else {
-        console.log("\n  No permissions assigned.");
+        console.log("No permissions assigned.");
       }
+      console.groupEnd()
+      console.log()
     } else {
       if (!options.token) {
         console.error("Error: Token required");
@@ -40,20 +42,23 @@ export async function showCommand(username: string | undefined, options: ShowOpt
 
       const result = await client.getOwnPermissions();
 
-      banner("Your Permissions", { bg: BG_COLORS.CYAN });
+      banner(" Your Permissions ", { bg: BG_COLORS.CYAN });
 
-      console.log(`\n  Admin: ${result.is_admin}`);
+      console.group()
+      console.log(`Admin: ${result.is_admin}`);
 
       if (result.permissions.length > 0) {
-        console.log(`\n=== Permissions (${result.permissions.length}) ===\n`);
+        console.log(`Permissions (${result.permissions.length}):`);
         const tableData = result.permissions.map((perm, index) => ({
           "#": index + 1,
           Permission: perm,
         }));
         console.table(tableData);
       } else {
-        console.log("\n  No permissions assigned.");
+        console.log("No permissions assigned.");
       }
+      console.groupEnd()
+      console.log()
     }
   } catch (error: any) {
     console.error(`Error fetching permissions: ${error.response?.data?.error || error.message}`);

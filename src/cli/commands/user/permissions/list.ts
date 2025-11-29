@@ -23,7 +23,7 @@ export async function listCommand(options: ListOptions): Promise<void> {
     console.groupEnd();
     console.log();
   } catch (error: any) {
-    console.error(`Error fetching permission types: ${error.response?.data?.error || error.message}`);
+    console.error(`Error fetching permissions: ${error}`);
     process.exit(1);
   }
 }

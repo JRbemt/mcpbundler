@@ -12,7 +12,7 @@ export async function removeCommand(username: string, permission: string, option
     const result = await client.removePermission(username, permission);
 
     banner("Permission Removed", { bg: BG_COLORS.RED });
-
+    console.group()
     const tableData = [{
       User: result.user.name,
       Permission: result.permission,
@@ -22,8 +22,10 @@ export async function removeCommand(username: string, permission: string, option
     console.table(tableData);
 
     if (result.affected_users > 1) {
-      console.log(`\n  ⚠️  Permission cascaded and removed from ${result.affected_users} user(s) (including descendants)`);
+      console.log(`Permission cascaded and removed from ${result.affected_users} user(s) (including descendants)`);
     }
+    console.groupEnd()
+    console.log()
   } catch (error: any) {
     console.error(`Error removing permission: ${error.response?.data?.error || error.message}`);
     if (error.response?.data?.message) {

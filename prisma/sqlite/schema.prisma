@@ -47,11 +47,14 @@ model Mcp {
   masterAuthConfig String?  @map("master_auth_config") // Optional shared credentials (JSON string)
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
+  createdById      String?  @map("created_by_id")
 
   // Relations
+  createdBy                     ApiUser?                     @relation("McpCreator", fields: [createdById], references: [id], onDelete: SetNull)
   collectionMcps                CollectionMcp[]
   collectionTokenMcpCredentials CollectionTokenMcpCredential[]
 
+  @@index([createdById])
   @@map("mcps")
 }
 
@@ -74,23 +77,6 @@ model CollectionMcp {
   @@map("collection_mcps")
 }
 
-// OAuth credentials for token-specific MCP credentials
-model OAuthCredential {
-  id                    String                       @id @default(uuid())
-  tokenMcpCredentialId  String?                      @map("token_mcp_credential_id")
-  tokenId               String?                      @map("token_id")
-  tokenMcpCredential    CollectionTokenMcpCredential? @relation(fields: [tokenMcpCredentialId], references: [id], onDelete: Cascade)
-  token                 CollectionToken?             @relation(fields: [tokenId], references: [id], onDelete: Cascade)
-  provider              String                       // e.g., "notion", "github", "google"
-  accessToken           String                       @map("access_token") // Encrypted
-  refreshToken          String?                      @map("refresh_token") // Encrypted
-  expiresAt             DateTime?                    @map("expires_at")
-  createdAt             DateTime                     @default(now()) @map("created_at")
-  updatedAt             DateTime                     @updatedAt @map("updated_at")
-
-  @@map("oauth_credentials")
-}
-
 // Collection access tokens
 model CollectionToken {
   id           String     @id @default(uuid())
@@ -106,7 +92,6 @@ model CollectionToken {
 
   // Relations
   mcpCredentials   CollectionTokenMcpCredential[]
-  oauthCredentials OAuthCredential[]
 
   @@map("collection_tokens")
 }
@@ -122,7 +107,6 @@ model CollectionTokenMcpCredential {
 
   token            CollectionToken   @relation(fields: [tokenId], references: [id], onDelete: Cascade)
   mcp              Mcp               @relation(fields: [mcpId], references: [id], onDelete: Cascade)
-  oauthCredentials OAuthCredential[]
 
   @@unique([tokenId, mcpId])
   @@map("collection_token_mcp_credentials")
@@ -146,6 +130,7 @@ model ApiUser {
   created            ApiUser[]            @relation("CreatedBy")
   permissions        ApiUserPermission[]
   createdCollections Collection[]         @relation("CollectionCreator")
+  createdMcps        Mcp[]                @relation("McpCreator")
 
   @@index([isAdmin])
   @@index([revokedAt])
@@ -158,6 +143,7 @@ enum PermissionType {
   CREATE_USER
   ADD_MCP
   LIST_USERS
+  VIEW_PERMISSIONS
 }
 
 model ApiUserPermission {

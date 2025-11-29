@@ -14,14 +14,14 @@ export async function revokeCreatedCommand(options: RevokeCreatedOptions): Promi
 
     // Handle --all flag
     if (options.all) {
-      console.log(`\n⚠️  WARNING: This will revoke ALL users you created and all their descendants!`);
-      console.log(`⚠️  This action cannot be undone!\n`);
+      console.log(`WARNING: This will revoke ALL users you created and all their descendants!`);
+      console.log(`This action cannot be undone!`);
 
       const result = await client.revokeAllCreatedUsers();
 
       banner("Users Revoked Successfully", { bg: BG_COLORS.RED });
 
-      console.log(`\n  Direct users revoked: ${result.direct_users_revoked}`);
+      console.log(`  Direct users revoked: ${result.direct_users_revoked}`);
       console.log(`  Total users revoked (including descendants): ${result.total_revoked}\n`);
 
       if (result.total_revoked > 0) {

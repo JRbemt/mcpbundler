@@ -12,6 +12,7 @@ export interface McpCreate {
   tokenCost?: number;
   masterAuthConfig?: any;
   authStrategy?: 'NONE' | 'MASTER' | 'TOKEN_SPECIFIC';
+  createdById?: string;
 }
 
 export class McpRepository {
@@ -34,6 +35,7 @@ export class McpRepository {
       stateless: data.stateless ?? false,
       tokenCost: data.tokenCost ?? 0.000,
       authStrategy: data.authStrategy || 'NONE',
+      createdById: data.createdById,
     };
 
     if (data.masterAuthConfig) {

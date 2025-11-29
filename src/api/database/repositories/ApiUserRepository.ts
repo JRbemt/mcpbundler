@@ -6,6 +6,10 @@ export type ApiUserWithPermissions = Prisma.ApiUserGetPayload<{
   include: { permissions: true };
 }>;
 
+export type ApiUserWithCreator = Prisma.ApiUserGetPayload<{
+  include: { createdBy: { select: { name: true } } };
+}>;
+
 /**
  * Repository for managing admin API keys
  * Handles creation, validation, and revocation of API keys
@@ -138,7 +142,7 @@ export class ApiUserRepository {
   /**
    * List API users with optional filters
    */
-  async list(options?: { includeRevoked?: boolean }): Promise<ApiUser[]> {
+  async list(options?: { includeRevoked?: boolean }): Promise<ApiUserWithCreator[]> {
     const where: Prisma.ApiUserWhereInput = {};
 
     if (!options?.includeRevoked) {
@@ -147,6 +151,13 @@ export class ApiUserRepository {
 
     return await this.prisma.apiUser.findMany({
       where,
+      include: {
+        createdBy: {
+          select: {
+            name: true,
+          },
+        },
+      },
       orderBy: {
         createdAt: "desc",
       },

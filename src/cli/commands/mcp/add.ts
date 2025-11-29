@@ -1,10 +1,8 @@
 import { BundlerAPIClient, Mcp } from "../../utils/api-client.js";
 import { UpstreamAuthConfig } from "../../../core/config/schemas.js";
 import { banner, BG_COLORS } from "../../utils/print-utils.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { buildAuthOptions } from "../../../utils/upstream-auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import logger from "../../../utils/logger.js";
+import { canFetchMcp, fetchMcpCapabilities } from "./capabilities/fetch.js";
 
 interface AddManualOptions {
   url: string;
@@ -25,7 +23,6 @@ interface AddManualOptions {
  * Add an MCP manually via URL and metadata
  */
 export async function addMcpCommand(options: AddManualOptions): Promise<void> {
-
   try {
     // Parse auth configuration
     let authConfig: UpstreamAuthConfig | undefined;
@@ -64,10 +61,6 @@ export async function addMcpCommand(options: AddManualOptions): Promise<void> {
       };
     }
     const namespace = options.namespace;
-    if (!namespace) {
-      logger.error("Error: --namespace is required when adding an MCP");
-      process.exit(1);
-    }
 
     // Determine auth strategy
     let authStrategy: "MASTER" | "TOKEN_SPECIFIC" | "NONE" = "NONE";
@@ -75,6 +68,11 @@ export async function addMcpCommand(options: AddManualOptions): Promise<void> {
       authStrategy = options.authType;
     } else if (authConfig) {
       authStrategy = "MASTER";
+    }
+
+    if (authStrategy === "MASTER" && !(options.authBasic || options.authApikey || options.authBearer)) {
+      console.error("--auth-strategy set to MASTER, but no auth credentials were given");
+      throw new Error("--auth-strategy set to MASTER, but no auth credentials were given");
     }
 
     // Build upstream config
@@ -110,8 +108,96 @@ export async function addMcpCommand(options: AddManualOptions): Promise<void> {
     console.groupEnd()
     console.log()
 
-    // Display overview
+    const can_fetch_capbailities = canFetchMcp(mcp)
 
+    // Display overview
+    if (can_fetch_capbailities.canQuery) {
+      const capabilities = await fetchMcpCapabilities(mcp);
+
+
+      if (capabilities) {
+        banner(" MCP Capabilities ", { bg: BG_COLORS.GREEN });
+        // Display tools table
+        if (capabilities.tools.length > 0) {
+          console.log(`   Tools (${capabilities.tools.length}):`);
+          const toolsToShow = capabilities.tools.slice(0, 10);
+
+          // Helper function to wrap text at specified width
+          const wrapText = (text: string, width: number): string[] => {
+            if (!text) return ["-"];
+            const words = text.split(" ");
+            const lines: string[] = [];
+            let currentLine = "";
+
+            for (const word of words) {
+              const testLine = currentLine ? currentLine + " " + word : word;
+              if (testLine.length <= width) {
+                currentLine = testLine;
+              } else {
+                if (currentLine) lines.push(currentLine);
+                currentLine = word;
+              }
+            }
+            if (currentLine) lines.push(currentLine);
+
+            return lines;
+          };
+
+          // Custom table formatter for multi-line content
+          const nameColWidth = 30;
+          const descColWidth = 80;
+
+          // ANSI color codes
+          const green = "\x1b[32m";
+          const reset = "\x1b[0m";
+
+          console.group();
+          console.log(`   ┌─${"─".repeat(nameColWidth)}─┬─${"─".repeat(descColWidth)}─┐`);
+          console.log(`   │ ${green}${"Name".padEnd(nameColWidth)}${reset} │ ${green}${"Description".padEnd(descColWidth)}${reset} │`);
+          console.log(`   ├─${"─".repeat(nameColWidth)}─┼─${"─".repeat(descColWidth)}─┤`);
+
+          toolsToShow.forEach((tool, index) => {
+            const nameLines = wrapText(tool.name, nameColWidth);
+            const descLines = wrapText(tool.description || "-", descColWidth);
+            const maxLines = Math.max(nameLines.length, descLines.length);
+
+            for (let i = 0; i < maxLines; i++) {
+              const namePart = nameLines[i] || "";
+              const descPart = descLines[i] || "";
+              console.log(`   │ ${green}${namePart.padEnd(nameColWidth)}${reset} │ ${green}${descPart.padEnd(descColWidth)}${reset} │`);
+            }
+
+            // Add separator between tools (but not after the last one)
+            if (index < toolsToShow.length - 1) {
+              console.log(`   ├─${"─".repeat(nameColWidth)}─┼─${"─".repeat(descColWidth)}─┤`);
+            }
+          });
+
+          // Add "more" row if there are additional tools
+          if (capabilities.tools.length > 10) {
+            console.log(`   ├─${"─".repeat(nameColWidth)}─┼─${"─".repeat(descColWidth)}─┤`);
+            const moreText = `... ${capabilities.tools.length - 10} more tool(s) not shown ...`;
+            console.log(`   │ ${green}${"...".padEnd(nameColWidth)}${reset} │ ${green}${moreText.padEnd(descColWidth)}${reset} │`);
+          }
+
+          console.log(`   └─${"─".repeat(nameColWidth)}─┴─${"─".repeat(descColWidth)}─┘`);
+          console.groupEnd();
+        } else {
+          console.log("   Tools: 0");
+        }
+
+        // Display resource and prompt counts only
+        console.log(`   Resources: ${capabilities.resources.length}`);
+        console.log(`   Prompts: ${capabilities.prompts.length}`);
+      } else {
+        banner(" Failed to fetch capabilities", { bg: BG_COLORS.YELLOW });
+        console.log("   " + can_fetch_capbailities.reason);
+      }
+    } else {
+      banner(" Fetching MCP capabilities not possible ", { bg: BG_COLORS.YELLOW });
+      console.log("   " + can_fetch_capbailities.reason);
+    }
+    console.log();
   } catch (error: any) {
     console.error(`Failed to add MCP: ${error.response?.data?.error || error.message}`);
 

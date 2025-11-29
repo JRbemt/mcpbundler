@@ -13,7 +13,7 @@ export async function addCommand(username: string, permission: string, options: 
     const result = await client.addPermission(username, permission, options.propagate);
 
     banner("Permission Added Successfully", { bg: BG_COLORS.GREEN });
-
+    console.group()
     const tableData = [{
       User: result.user.name,
       Permission: result.permission,
@@ -23,8 +23,10 @@ export async function addCommand(username: string, permission: string, options: 
     console.table(tableData);
 
     if (options.propagate && result.affected_users > 1) {
-      console.log(`\n  Permission cascaded to ${result.affected_users} user(s) (including descendants)`);
+      console.log(`Permission cascaded to ${result.affected_users} user(s) (including descendants)`);
     }
+    console.groupEnd()
+    console.log()
   } catch (error: any) {
     console.error(`Error adding permission: ${error.response?.data?.error || error.message}`);
     if (error.response?.data?.message) {

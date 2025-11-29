@@ -130,17 +130,7 @@ export class CollectionResolver implements ResolverService {
       collection_id: 'wildcard',
       user_id: 'wildcard',
       name: 'Wildcard Access - All MCPs',
-      upstreams: [{
-        namespace: "files",
-        url: "http://localhost:3001/sse",
-        author: "joaquin",
-        version: "1.0.0.",
-        stateless: false,
-        auth_strategy: "NONE",
-        description: "",
-        token_cost: 0
-      }]
-      //upstreams as any[],
+      upstreams: upstreams as any[],
     };
   }
 

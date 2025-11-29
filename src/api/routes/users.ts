@@ -1,7 +1,7 @@
 import express, { Request, Response, Router } from 'express';
 import { PrismaClient, PermissionType } from '@prisma/client';
 import logger from '../../utils/logger.js';
-import { ApiKeyRepository, GlobalSettingsRepository } from '../database/repositories/index.js';
+import { ApiUserRepository, GlobalSettingsRepository } from '../database/repositories/index.js';
 import { hasPermission, isAdmin } from '../middleware/auth.js';
 import { auditApiLog, AuditApiAction } from '../../utils/audit-log.js';
 import { z } from 'zod';
@@ -44,7 +44,7 @@ async function revokeUserCascade(prisma: PrismaClient, userId: string): Promise<
 
 export function createUserRoutes(prisma: PrismaClient): Router {
   const router = express.Router();
-  const apiUserRepo = new ApiKeyRepository(prisma);
+  const apiUserRepo = new ApiUserRepository(prisma);
   const settingsRepo = new GlobalSettingsRepository(prisma);
 
   const CreateUserSchema = z.object({
@@ -130,11 +130,6 @@ export function createUserRoutes(prisma: PrismaClient): Router {
    * Create a new user (requires authentication and CREATE_USER permission)
    */
   router.post('/', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     if (!hasPermission(req, PermissionType.CREATE_USER)) {
       auditApiLog({
         action: AuditApiAction.AUTH_FAILURE,
@@ -153,7 +148,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
       const validatedData = CreateUserSchema.parse(req.body);
 
       const canGrant = await apiUserRepo.canGrantPermissions(
-        req.apiAuth.userId,
+        req.apiAuth!.userId,
         validatedData.permissions
       );
 
@@ -192,7 +187,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
         department: validatedData.department,
         isAdmin: validatedData.isAdmin,
         permissions: validatedData.permissions,
-        createdById: req.apiAuth.userId,
+        createdById: req.apiAuth!.userId,
       });
 
       auditApiLog({
@@ -201,7 +196,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
         details: {
           userId: apiUser.id,
           name: apiUser.name,
-          createdBy: req.apiAuth.userId,
+          createdBy: req.apiAuth!.userId,
         },
       }, req);
 
@@ -233,13 +228,8 @@ export function createUserRoutes(prisma: PrismaClient): Router {
    * Get own user profile with all users created by this user
    */
   router.get('/me', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     try {
-      const user = await apiUserRepo.getWithPermissions(req.apiAuth.userId);
+      const user = await apiUserRepo.getWithPermissions(req.apiAuth!.userId);
 
       if (!user) {
         res.status(404).json({ error: 'User not found' });
@@ -249,7 +239,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
       // Get all users created by this user
       const createdUsers = await prisma.apiUser.findMany({
         where: {
-          createdById: req.apiAuth.userId
+          createdById: req.apiAuth!.userId
         },
         include: {
           permissions: true
@@ -292,15 +282,11 @@ export function createUserRoutes(prisma: PrismaClient): Router {
    * Update own user profile
    */
   router.put('/me', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
 
     try {
       const validatedData = UpdateUserSchema.parse(req.body);
 
-      const user = await apiUserRepo.update(req.apiAuth.userId, validatedData);
+      const user = await apiUserRepo.update(req.apiAuth!.userId, validatedData);
 
       auditApiLog({
         action: AuditApiAction.USER_UPDATE,
@@ -332,13 +318,8 @@ export function createUserRoutes(prisma: PrismaClient): Router {
    * Revoke own API key
    */
   router.post('/me/revoke', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     try {
-      const user = await apiUserRepo.revoke(req.apiAuth.userId);
+      const user = await apiUserRepo.revoke(req.apiAuth!.userId);
 
       auditApiLog({
         action: AuditApiAction.USER_REVOKE,
@@ -361,11 +342,6 @@ export function createUserRoutes(prisma: PrismaClient): Router {
    * Revoke a user created by the current user (and cascade to all users they created)
    */
   router.post('/me/created/:userId/revoke', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     try {
       const targetUserId = req.params.userId;
 
@@ -379,7 +355,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
         return;
       }
 
-      if (targetUser.createdById !== req.apiAuth.userId) {
+      if (targetUser.createdById !== req.apiAuth!.userId) {
         auditApiLog({
           action: AuditApiAction.AUTH_FAILURE,
           success: false,
@@ -407,7 +383,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
         success: true,
         details: {
           targetUserId,
-          revokedBy: req.apiAuth.userId,
+          revokedBy: req.apiAuth!.userId,
           cascadeCount: revokedUserIds.length,
           revokedUserIds,
         },
@@ -430,16 +406,11 @@ export function createUserRoutes(prisma: PrismaClient): Router {
    * Revoke ALL users created by the current user (and all their descendants)
    */
   router.post('/me/created/revoke-all', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     try {
       // Find all users created by the current user
       const createdUsers = await prisma.apiUser.findMany({
         where: {
-          createdById: req.apiAuth.userId,
+          createdById: req.apiAuth!.userId,
           revokedAt: null,
         },
         select: {
@@ -468,7 +439,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
         action: AuditApiAction.USER_REVOKE,
         success: true,
         details: {
-          revokedBy: req.apiAuth.userId,
+          revokedBy: req.apiAuth!.userId,
           revokeAll: true,
           directCount: createdUsers.length,
           totalCount: allRevokedIds.length,
@@ -499,12 +470,6 @@ export function createUserRoutes(prisma: PrismaClient): Router {
       headers: req.headers
     }, 'GET /api/users endpoint hit');
 
-    if (!req.apiAuth) {
-      logger.warn('No apiAuth found on request');
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     if (!hasPermission(req, PermissionType.LIST_USERS)) {
       auditApiLog({
         action: AuditApiAction.AUTH_FAILURE,
@@ -532,6 +497,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
         created_at: user.createdAt,
         last_used_at: user.lastUsedAt,
         revoked_at: user.revokedAt,
+        created_by: user.createdBy?.name,
       })));
     } catch (error: any) {
       logger.error({ error: error.message }, 'Failed to list users');
@@ -544,10 +510,6 @@ export function createUserRoutes(prisma: PrismaClient): Router {
    * Get user by name (admin only)
    */
   router.get('/by-name/:name', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
 
     if (!isAdmin(req)) {
       auditApiLog({
@@ -595,11 +557,6 @@ export function createUserRoutes(prisma: PrismaClient): Router {
    * Revoke user by name (admin only)
    */
   router.post('/by-name/:name/revoke', async (req: Request, res: Response) => {
-    if (!req.apiAuth) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
     if (!isAdmin(req)) {
       auditApiLog({
         action: AuditApiAction.AUTH_FAILURE,
@@ -627,7 +584,7 @@ export function createUserRoutes(prisma: PrismaClient): Router {
       auditApiLog({
         action: AuditApiAction.USER_REVOKE,
         success: true,
-        details: { userId: revokedUser.id, revokedBy: req.apiAuth.userId },
+        details: { userId: revokedUser.id, revokedBy: req.apiAuth!.userId },
       }, req);
 
       res.json({

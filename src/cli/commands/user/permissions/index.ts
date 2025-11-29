@@ -16,7 +16,7 @@ export function createPermissionsCommand(): Command {
     .description("Add one of your permissions to a created user")
     .option("--propagate", "Cascade permission to all descendants")
     .action((username, permission, options, command) => {
-      const globalOpts = command.parent.parent.opts();
+      const globalOpts = command.parent.parent.parent.opts();
       addCommand(username, permission, { ...options, ...globalOpts });
     });
 
@@ -24,7 +24,7 @@ export function createPermissionsCommand(): Command {
     .command("list")
     .description("List all available permission types (public endpoint)")
     .action((options, command) => {
-      const globalOpts = command.parent.parent.opts();
+      const globalOpts = command.parent.parent.parent.opts();
       listCommand({ ...options, ...globalOpts });
     });
 
@@ -32,7 +32,7 @@ export function createPermissionsCommand(): Command {
     .command("remove <username> <permission>")
     .description("Remove one of your permissions from a created user (cascades to descendants)")
     .action((username, permission, options, command) => {
-      const globalOpts = command.parent.parent.opts();
+      const globalOpts = command.parent.parent.parent.opts();
       removeCommand(username, permission, { ...options, ...globalOpts });
     });
 
@@ -40,7 +40,7 @@ export function createPermissionsCommand(): Command {
     .command("show [username]")
     .description("Show user permissions (requires valid token, VIEW_PERMISSIONS for others)")
     .action((username, options, command) => {
-      const globalOpts = command.parent.parent.opts();
+      const globalOpts = command.parent.parent.parent.opts();
       showCommand(username, { ...options, ...globalOpts });
     });
 

@@ -39,7 +39,7 @@ const CONFIG = {
     port: parseInt(process.env.PORT || "3000", 10),
     concurrency: {
       max_sessions: 100,
-      idle_timeout_ms: 5 * 60 * 1000,
+      idle_timeout_ms: 20 * 60 * 1000,
     }
   },
   resolver: {
@@ -62,8 +62,11 @@ function parsePermissions(value: string | undefined): PermissionType[] {
   const validPermissions: PermissionType[] = [];
   const invalidPermissions: string[] = [];
 
+  const validPermissionValues = Object.values(PermissionType);
+
+  logger.info(validPermissionValues)
   for (const part of parts) {
-    if (Object.values(PermissionType).includes(part as PermissionType)) {
+    if (validPermissionValues.includes(part as PermissionType)) {
       validPermissions.push(part as PermissionType);
     } else {
       invalidPermissions.push(part);
@@ -71,7 +74,8 @@ function parsePermissions(value: string | undefined): PermissionType[] {
   }
 
   if (invalidPermissions.length > 0) {
-    logger.warn({ invalidPermissions }, "Invalid permissions in SELF_SERVICE_DEFAULT_PERMISSIONS");
+    logger.error({ invalidPermissions }, `Invalid permissions in SELF_SERVICE_DEFAULT_PERMISSIONS: ${invalidPermissions}`);
+    throw new Error(`Invalid permissions in SELF_SERVICE_DEFAULT_PERMISSIONS: ${invalidPermissions}`);
   }
 
   return validPermissions;
@@ -171,7 +175,7 @@ export async function main() {
     apiRouter.use("/collections", authMiddleware, createCollectionRoutes(prisma));
     apiRouter.use("/tokens", authMiddleware, createTokenRoutes(prisma));
     apiRouter.use("/mcps", authMiddleware, createMcpRoutes(prisma));
-    apiRouter.use("/permissions", authMiddleware, createPermissionRoutes(prisma));
+    apiRouter.use("/permissions", createPermissionRoutes(authMiddleware, prisma));
     app.use("/api", apiRouter);
 
     // Start the HTTP server after all routes are mounted
@@ -212,8 +216,11 @@ export async function main() {
     });
 
   } catch (error) {
-    console.log(error);
-    logger.error({ error }, "Failed to start server");
+    if (error instanceof Error) {
+      logger.error({ error: error.message }, "Failed to start server");
+    } else {
+      logger.error({ error: String(error) }, "Failed to start server");
+    }
     process.exit(1);
   }
 }

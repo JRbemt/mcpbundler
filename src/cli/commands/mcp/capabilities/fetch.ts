@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 /**
  * Check if MCP can be queried (has auth available or doesn"t need it)
  */
-function canQueryMcp(mcp: Mcp): { canQuery: boolean; reason?: string } {
+export function canFetchMcp(mcp: Mcp): { canQuery: boolean; reason?: string } {
     if (!mcp.auth_strategy || mcp.auth_strategy === "NONE") {
         return { canQuery: true };
     }
@@ -17,7 +17,7 @@ function canQueryMcp(mcp: Mcp): { canQuery: boolean; reason?: string } {
     }
 
     if (mcp.auth_strategy === "MASTER" && !mcp.master_auth_config) {
-        return { canQuery: false, reason: "Master auth required but not configured" };
+        throw new Error("Master auth required but not configured")
     }
 
     if (mcp.auth_strategy === "TOKEN_SPECIFIC") {
@@ -30,7 +30,7 @@ function canQueryMcp(mcp: Mcp): { canQuery: boolean; reason?: string } {
 /**
  * Connect to MCP and fetch capabilities
  */
-async function fetchMcpCapabilities(mcp: Mcp): Promise<{
+export async function fetchMcpCapabilities(mcp: Mcp): Promise<{
     tools: Array<{ name: string; description?: string }>;
     resources: Array<{ name: string; uri: string; description?: string }>;
     prompts: Array<{ name: string; description?: string }>;

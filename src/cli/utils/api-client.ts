@@ -44,6 +44,7 @@ export interface ApiUser {
   last_used_at?: string;
   revoked_at?: string;
   api_key?: string;
+  created_by?: string;
   created_users?: ApiUser[];
 }
 
@@ -202,6 +203,14 @@ export class BundlerAPIClient {
    */
   async deleteMcp(namespace: string): Promise<void> {
     await this.client.delete(`/api/mcps/${namespace}`);
+  }
+
+  /**
+   * Delete all MCPs created by the current user
+   */
+  async deleteAllMyMcps(): Promise<{ deleted: number; mcps: string[] }> {
+    const response = await this.client.delete("/api/mcps");
+    return response.data;
   }
 
   /**
@@ -372,7 +381,7 @@ export class BundlerAPIClient {
    * List all available permission types
    */
   async listPermissions(): Promise<PermissionTypes> {
-    const response = await this.client.get("/api/permissions/");
+    const response = await this.client.get("/api/permissions");
     return response.data;
   }
 }
