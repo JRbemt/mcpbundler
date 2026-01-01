@@ -1,182 +1,113 @@
-import express, { Request, Response, Router } from 'express';
-import { PrismaClient, PermissionType } from '@prisma/client';
-import logger from '../../utils/logger.js';
-import { McpRepository } from '../database/repositories/index.js';
-import { hasPermission } from '../middleware/auth.js';
-import { auditApiLog, AuditApiAction } from '../../utils/audit-log.js';
-import { z } from 'zod';
-import { sendZodError } from '../../utils/error-formatter.js';
+/**
+ * MCP Routes - MCP registry management
+ *
+ * Manages MCP server records. MCPs are global server definitions that can be added
+ * to bundles. Each has a unique namespace and one of three auth strategies:
+ * MASTER (shared config), USER_SET (per-token credentials), or NONE.
+ *
+ * Endpoints:
+ * - GET    /api/mcps                       - List all MCPs
+ * - POST   /api/mcps                       - Add MCP (ADD_MCP permission)
+ * - GET    /api/mcps/:namespace            - Get MCP by namespace
+ * - PUT    /api/mcps/:namespace            - Update MCP by namespace
+ * - DELETE /api/mcps/all                   - Bulk delete all user's MCPs
+ * - DELETE /api/mcps/:namespace            - Delete MCP by namespace
+ *
+ * Deletion uses hierarchical permissions: you can delete MCPs you created or MCPs
+ * created by users you created. Deletions cascade to all bundle instances.
+ */
+
+import express, { Request, Response, Router } from "express";
+import { PrismaClient, PermissionType } from "@prisma/client";
+import logger from "../../utils/logger.js";
+import { McpRepository, ApiUserRepository } from "../database/repositories/index.js";
+import { hasPermission } from "../middleware/auth.js";
+import { auditApiLog, AuditApiAction } from "../../utils/audit-log.js";
+import { z } from "zod";
+import { sendZodError } from "./utils/error-formatter.js";
+import { MCPAuthConfigSchema, AuthStrategySchema } from "../../core/config/schemas.js";
+import { ErrorResponse } from "./utils/schemas.js";
 
 /**
- * Check if user has permission to delete an MCP
- * Permission granted if:
- * - User is the creator of the MCP
- * - User is an admin
- * - User is the creator of the creator (recursively)
+ * Request/Response schemas for MCP endpoints
  */
-async function checkMcpDeletePermission(
-  user: any,
-  mcp: any,
-  prisma: PrismaClient
-): Promise<boolean> {
-  // Admin can delete anything
-  if (user.isAdmin) {
-    return true;
-  }
 
-  // Check if user is direct creator
-  if (mcp.createdById === user.id) {
-    return true;
-  }
+const CreateMcpRequestSchema = z.object({
+  namespace: z.string()
+    .min(1)
+    .regex(/^(?!.*__)([A-Za-z0-9_.-]+)$/, "Namespace must contain only letters, digits, underscores, dots, and hyphens (no consecutive underscores)"),
+  url: z.url(),
+  description: z.string().min(1),
+  version: z.string().min(1).default("1.0.0"),
+  stateless: z.boolean().default(false),
+  authStrategy: AuthStrategySchema.default("NONE"),
+  masterAuth: MCPAuthConfigSchema.optional()
+});
 
-  // Check creator hierarchy recursively
-  if (mcp.createdById) {
-    let currentCreatorId = mcp.createdById;
-    const visited = new Set<string>([currentCreatorId]);
+export const MCPResponseSchema = CreateMcpRequestSchema.extend({
+  id: z.string(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+  createdBy: z.object({
+    id: z.string(),
+    name: z.string(),
+  }).optional(),
+}).omit({
+  masterAuth: true,
+});
 
-    while (currentCreatorId) {
-      const creator = await prisma.apiUser.findUnique({
-        where: { id: currentCreatorId },
-        select: { createdById: true }
-      });
+const UpdateMcpRequestSchema = CreateMcpRequestSchema.partial().omit({ namespace: true });
 
-      if (!creator || !creator.createdById) {
-        break;
-      }
+const BulkDeleteResponseSchema = z.object({
+  deleted: z.number(),
+  mcps: z.array(z.string()),
+});
 
-      if (creator.createdById === user.id) {
-        return true;
-      }
 
-      // Prevent infinite loops
-      if (visited.has(creator.createdById)) {
-        break;
-      }
-
-      visited.add(creator.createdById);
-      currentCreatorId = creator.createdById;
-    }
-  }
-
-  return false;
-}
+export type CreateMcpRequest = z.infer<typeof CreateMcpRequestSchema>;
+export type UpdateMcpRequest = z.infer<typeof UpdateMcpRequestSchema>;
+export type McpResponse = z.infer<typeof MCPResponseSchema>;
+export type BulkDeleteResponse = z.infer<typeof BulkDeleteResponseSchema>;
 
 export function createMcpRoutes(prisma: PrismaClient): Router {
   const router = express.Router();
   const mcpRepo = new McpRepository(prisma);
-
-  /**
-   * Schema for creating/updating MCPs
-   */
-  const McpSchema = z.object({
-    namespace: z.string().min(1),
-    url: z.string().url(),
-    author: z.string().min(1),
-    description: z.string().min(1),
-    version: z.string().optional(),
-    stateless: z.boolean().optional(),
-    tokenCost: z.number().positive().optional(),
-    authStrategy: z.enum(['MASTER', 'TOKEN_SPECIFIC', 'NONE']).optional(),
-    masterAuthConfig: z.string().optional(),
-  });
+  const userRepo = new ApiUserRepository(prisma);
 
   /**
    * GET /api/mcps
-   * List all master MCPs
+   * List all MCPs
    */
-  router.get('/', async (req: Request, res: Response) => {
+  router.get('/', async (req: Request, res: Response<McpResponse[] | ErrorResponse>): Promise<void> => {
     try {
       const mcps = await mcpRepo.listAll();
 
-      res.json(mcps.map(mcp => ({
-        id: mcp.id,
-        namespace: mcp.namespace,
-        url: mcp.url,
-        author: mcp.author,
-        description: mcp.description,
-        version: mcp.version,
-        stateless: mcp.stateless,
-        token_cost: mcp.tokenCost,
-        auth_strategy: mcp.authStrategy,
-        created_at: mcp.createdAt,
-        updated_at: mcp.updatedAt,
-      })));
+      auditApiLog({
+        action: AuditApiAction.MCP_VIEW,
+        success: true,
+        details: { count: mcps.length },
+      }, req);
+
+      res.json(mcps.map((m) => MCPResponseSchema.strip().parse(m)));
     } catch (error: any) {
+      auditApiLog({
+        action: AuditApiAction.MCP_VIEW,
+        success: false,
+        errorMessage: error.message,
+      }, req);
+
       logger.error({ error: error.message }, 'Failed to list MCPs');
       res.status(500).json({ error: 'Failed to list MCPs' });
     }
   });
 
-  /**
-   * GET /api/mcps/namespace/:namespace
-   * Get MCP by namespace
-   */
-  router.get('/namespace/:namespace', async (req: Request, res: Response) => {
-    try {
-      const mcp = await mcpRepo.findByNamespace(req.params.namespace);
-
-      if (!mcp) {
-        res.status(404).json({ error: 'MCP not found' });
-        return;
-      }
-
-      res.json({
-        id: mcp.id,
-        namespace: mcp.namespace,
-        url: mcp.url,
-        author: mcp.author,
-        description: mcp.description,
-        version: mcp.version,
-        stateless: mcp.stateless,
-        token_cost: mcp.tokenCost,
-        auth_strategy: mcp.authStrategy,
-        created_at: mcp.createdAt,
-        updated_at: mcp.updatedAt,
-      });
-    } catch (error: any) {
-      logger.error({ error: error.message }, 'Failed to get MCP by namespace');
-      res.status(500).json({ error: 'Failed to get MCP' });
-    }
-  });
-
-  /**
-   * GET /api/mcps/:id
-   * Get a specific MCP by ID
-   */
-  router.get('/:id', async (req: Request, res: Response) => {
-    try {
-      const mcp = await mcpRepo.findById(req.params.id);
-
-      if (!mcp) {
-        res.status(404).json({ error: 'MCP not found' });
-        return;
-      }
-
-      res.json({
-        id: mcp.id,
-        namespace: mcp.namespace,
-        url: mcp.url,
-        author: mcp.author,
-        description: mcp.description,
-        version: mcp.version,
-        stateless: mcp.stateless,
-        token_cost: mcp.tokenCost,
-        auth_strategy: mcp.authStrategy,
-        created_at: mcp.createdAt,
-        updated_at: mcp.updatedAt,
-      });
-    } catch (error: any) {
-      logger.error({ error: error.message }, 'Failed to get MCP by ID');
-      res.status(500).json({ error: 'Failed to get MCP' });
-    }
-  });
 
   /**
    * POST /api/mcps
-   * Create a new master MCP (requires ADD_MCP permission)
+   * Add a new MCP (requires ADD_MCP permission)
    */
-  router.post('/', async (req: Request, res: Response) => {
-    if (!req.apiAuth!.isAdmin && !hasPermission(req, PermissionType.ADD_MCP)) {
+  router.post('/', async (req: Request<{}, McpResponse | ErrorResponse, CreateMcpRequest>, res: Response<McpResponse | ErrorResponse>): Promise<void> => {
+    if (!hasPermission(req, PermissionType.ADD_MCP)) {
       auditApiLog({
         action: AuditApiAction.AUTH_FAILURE,
         success: false,
@@ -191,19 +122,18 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
     }
 
     try {
-      const data = McpSchema.parse(req.body);
-
+      const data = CreateMcpRequestSchema.parse(req.body);
+      console.log(data);
       // Check if namespace already exists
       const existing = await mcpRepo.findByNamespace(data.namespace);
       if (existing) {
         res.status(409).json({ error: 'MCP with this namespace already exists' });
         return;
       }
-
-      const mcp = await mcpRepo.create({
-        ...data,
-        createdById: req.apiAuth!.userId
-      });
+      const mcp = await mcpRepo.create(
+        data,
+        req.apiAuth!.userId
+      );
 
       auditApiLog({
         action: AuditApiAction.MCP_CREATE,
@@ -211,71 +141,96 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         details: { mcpId: mcp.id, namespace: mcp.namespace },
       }, req);
 
-      logger.info({ mcpId: mcp.id, namespace: mcp.namespace }, 'Created master MCP');
+      logger.info({ mcpId: mcp.id, namespace: mcp.namespace }, 'Added MCP');
 
-      res.status(201).json({
-        id: mcp.id,
-        namespace: mcp.namespace,
-        url: mcp.url,
-        author: mcp.author,
-        description: mcp.description,
-        version: mcp.version,
-        stateless: mcp.stateless,
-        token_cost: mcp.tokenCost,
-        auth_strategy: mcp.authStrategy,
-        master_auth_config: mcp.masterAuthConfig,
-        created_at: mcp.createdAt,
-        updated_at: mcp.updatedAt,
-      });
+      res.status(201).json(MCPResponseSchema.strip().parse(mcp));
     } catch (error: any) {
       if (error instanceof z.ZodError) {
+        logger.error({
+          endpoint: 'POST /api/mcps',
+          error: error.issues,
+          receivedData: req.body,
+        }, 'Validation failed: missing or invalid parameters');
         sendZodError(res, error, "Invalid MCP data");
         return;
       }
 
-      logger.error({ error: error.message }, 'Failed to create MCP');
-      res.status(500).json({ error: 'Failed to create MCP' });
+      logger.error({ error: error.message }, 'Failed to add MCP');
+      res.status(500).json({ error: 'Failed to add MCP' });
     }
   });
 
   /**
-   * PUT /api/mcps/:id
-   * Update a master MCP
+   * PUT /api/mcps/:namespace
+   * Update a MCP by namespace (requires hierarchical ownership)
    */
-  router.put('/:id', async (req: Request, res: Response) => {
+  router.put('/:namespace', async (req: Request<{ namespace: string }, McpResponse | ErrorResponse, UpdateMcpRequest>, res: Response<McpResponse | ErrorResponse>): Promise<void> => {
     try {
-      const existing = await mcpRepo.findById(req.params.id);
+      const existing = await mcpRepo.findByNamespace(req.params.namespace);
       if (!existing) {
+        auditApiLog({
+          action: AuditApiAction.MCP_UPDATE,
+          success: false,
+          errorMessage: 'MCP not found',
+          details: { namespace: req.params.namespace },
+        }, req);
+
         res.status(404).json({ error: 'MCP not found' });
         return;
       }
 
-      const PartialMcpSchema = McpSchema.partial().omit({ namespace: true });
-      const data = PartialMcpSchema.parse(req.body);
+      if (!(await userRepo.isAuthorized(req.apiAuth!.userId, existing))) {
+        auditApiLog({
+          action: AuditApiAction.AUTH_FAILURE,
+          success: false,
+          errorMessage: 'Insufficient permissions to update MCP',
+          details: { namespace: req.params.namespace },
+        }, req);
 
-      const updated = await mcpRepo.update(req.params.id, data);
+        res.status(403).json({
+          error: 'Forbidden',
+          message: 'You can only update MCPs you created or that were created by users you created',
+        });
+        return;
+      }
 
-      logger.info({ mcpId: req.params.id }, 'Updated master MCP');
+      const data = UpdateMcpRequestSchema.parse(req.body);
+      const updated = await mcpRepo.update(existing.id, data);
 
-      res.json({
-        id: updated.id,
-        namespace: updated.namespace,
-        url: updated.url,
-        author: updated.author,
-        description: updated.description,
-        version: updated.version,
-        stateless: updated.stateless,
-        token_cost: updated.tokenCost,
-        auth_strategy: updated.authStrategy,
-        master_auth_config: updated.masterAuthConfig,
-        created_at: updated.createdAt,
-        updated_at: updated.updatedAt,
-      });
+      auditApiLog({
+        action: AuditApiAction.MCP_UPDATE,
+        success: true,
+        details: { mcpId: updated.id, namespace: updated.namespace },
+      }, req);
+
+      logger.info({ namespace: req.params.namespace }, 'Updated MCP');
+
+      res.json(MCPResponseSchema.strip().parse(updated));
     } catch (error: any) {
       if (error instanceof z.ZodError) {
+        auditApiLog({
+          action: AuditApiAction.MCP_UPDATE,
+          success: false,
+          errorMessage: 'Validation error',
+          details: { namespace: req.params.namespace },
+        }, req);
+
+        logger.error({
+          endpoint: 'PUT /api/mcps/:namespace',
+          namespace: req.params.namespace,
+          error: error.issues,
+          receivedData: req.body,
+        }, 'Validation failed: missing or invalid parameters');
         sendZodError(res, error, "Invalid MCP data");
         return;
       }
+
+      auditApiLog({
+        action: AuditApiAction.MCP_UPDATE,
+        success: false,
+        errorMessage: error.message,
+        details: { namespace: req.params.namespace },
+      }, req);
 
       logger.error({ error: error.message }, 'Failed to update MCP');
       res.status(500).json({ error: 'Failed to update MCP' });
@@ -283,21 +238,23 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
   });
 
   /**
-   * DELETE /api/mcps (bulk delete - all user's MCPs)
+   * DELETE /api/mcps/all
+   * Bulk delete all MCPs created by authenticated user and their descendants
+   *
+   * NOTE: This only deletes MCP records, not user accounts. Users remain untouched.
    */
-  router.delete('/', async (req: Request, res: Response) => {
+  router.delete('/all', async (req: Request, res: Response<BulkDeleteResponse | ErrorResponse>): Promise<void> => {
     try {
-      // Find all MCPs created by this user
-      const userMcps = await prisma.mcp.findMany({
-        where: { createdById: req.apiAuth!.userId }
-      });
+      // Collect IDs of users whose MCPs should be deleted
+      const descendantIds = await userRepo.collectDescendantIds(req.apiAuth!.userId);
+      const allUserIds = [req.apiAuth!.userId, ...descendantIds];
 
+      // Find all MCPs created by authenticated user and their descendants
+      const userMcps = await mcpRepo.findByCreators(allUserIds);
       const namespaces = userMcps.map(m => m.namespace);
 
-      // Delete all
-      await prisma.mcp.deleteMany({
-        where: { createdById: req.apiAuth!.userId }
-      });
+      // Delete all MCPs (users are NOT deleted, only MCP records)
+      await mcpRepo.deleteByCreators(allUserIds);
 
       auditApiLog({
         action: AuditApiAction.MCP_DELETE,
@@ -307,7 +264,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
 
       logger.info(
         { userId: req.apiAuth!.userId, count: userMcps.length },
-        'Bulk deleted user MCPs'
+        'Bulk deleted MCPs (hierarchical)'
       );
 
       res.json({
@@ -315,16 +272,56 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         mcps: namespaces
       });
     } catch (error: any) {
-      logger.error({ error: error.message }, 'Failed to bulk delete MCPs');
+      logger.error({ error: error.message, userId: req.apiAuth!.userId }, 'Failed to bulk delete MCPs');
       res.status(500).json({ error: 'Failed to bulk delete MCPs' });
     }
   });
 
   /**
-   * DELETE /api/mcps/:namespace
-   * Delete a master MCP (cascades to all collection instances)
+   * GET /api/mcps/:namespace
+   * Get MCP by namespace
    */
-  router.delete('/:namespace', async (req: Request, res: Response) => {
+  router.get('/:namespace', async (req: Request<{ namespace: string }>, res: Response<McpResponse | ErrorResponse>): Promise<void> => {
+    try {
+      const mcp = await mcpRepo.findByNamespace(req.params.namespace);
+
+      if (!mcp) {
+        auditApiLog({
+          action: AuditApiAction.MCP_VIEW,
+          success: false,
+          errorMessage: 'MCP not found',
+          details: { namespace: req.params.namespace },
+        }, req);
+
+        res.status(404).json({ error: 'MCP not found' });
+        return;
+      }
+
+      auditApiLog({
+        action: AuditApiAction.MCP_VIEW,
+        success: true,
+        details: { mcpId: mcp.id, namespace: mcp.namespace },
+      }, req);
+
+      res.json(MCPResponseSchema.strip().parse(mcp));
+    } catch (error: any) {
+      auditApiLog({
+        action: AuditApiAction.MCP_VIEW,
+        success: false,
+        errorMessage: error.message,
+        details: { namespace: req.params.namespace },
+      }, req);
+
+      logger.error({ error: error.message, namespace: req.params.namespace }, 'Failed to get MCP by namespace');
+      res.status(500).json({ error: 'Failed to get MCP' });
+    }
+  });
+
+  /**
+   * DELETE /api/mcps/:namespace
+   * Delete a MCP (cascades to all bundle instances)
+   */
+  router.delete('/:namespace', async (req: Request<{ namespace: string }>, res: Response<ErrorResponse | void>): Promise<void> => {
     try {
       const mcp = await mcpRepo.findByNamespace(req.params.namespace);
 
@@ -333,17 +330,17 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
         return;
       }
 
-      // Permission check: must be creator, admin, or creator of creator
-      const hasPermission = await checkMcpDeletePermission(req.apiAuth, mcp, prisma);
-
-      if (!hasPermission) {
+      if (!(await userRepo.isAuthorized(req.apiAuth!.userId, mcp))) {
         auditApiLog({
           action: AuditApiAction.AUTH_FAILURE,
           success: false,
           errorMessage: 'Insufficient permissions to delete MCP',
         }, req);
 
-        res.status(403).json({ error: 'Forbidden: You do not have permission to delete this MCP' });
+        res.status(403).json({
+          error: 'Forbidden',
+          message: 'You can only delete MCPs you created or that were created by users you created',
+        });
         return;
       }
 
@@ -359,7 +356,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
 
       res.status(204).send();
     } catch (error: any) {
-      logger.error({ error: error.message }, 'Failed to delete MCP');
+      logger.error({ error: error.message, namespace: req.params.namespace }, 'Failed to delete MCP');
       res.status(500).json({ error: 'Failed to delete MCP' });
     }
   });

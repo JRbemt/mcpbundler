@@ -1,27 +1,28 @@
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { UpstreamAuthConfig } from "../../../../core/config/schemas.js";
-import { buildAuthOptions } from "../../../../utils/upstream-auth.js";
+import { MCPAuthConfig } from "../../../../core/config/schemas.js";
+
 import { Mcp } from "../../../utils/api-client.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { buildAuthOptions } from "../../../../core/auth/mcp-auth.js";
 
 /**
  * Check if MCP can be queried (has auth available or doesn"t need it)
  */
-export function canFetchMcp(mcp: Mcp): { canQuery: boolean; reason?: string } {
-    if (!mcp.auth_strategy || mcp.auth_strategy === "NONE") {
+export function canFetchMcp(mcp: Mcp, auth: MCPAuthConfig | undefined): { canQuery: boolean; reason?: string } {
+    if (!mcp.authStrategy || mcp.authStrategy === "NONE") {
         return { canQuery: true };
     }
 
-    if (mcp.auth_strategy === "MASTER" && mcp.master_auth_config) {
+    if (mcp.authStrategy === "MASTER" && auth) {
         return { canQuery: true };
     }
 
-    if (mcp.auth_strategy === "MASTER" && !mcp.master_auth_config) {
+    if (mcp.authStrategy === "MASTER" && !auth) {
         throw new Error("Master auth required but not configured")
     }
 
-    if (mcp.auth_strategy === "TOKEN_SPECIFIC") {
-        return { canQuery: false, reason: "Token-specific auth required (use with a collection token)" };
+    if (mcp.authStrategy === "USER_SET") {
+        return { canQuery: false, reason: "Token-specific auth required (use with a bundle token)" };
     }
 
     return { canQuery: false, reason: "Unknown auth configuration" };
@@ -30,37 +31,23 @@ export function canFetchMcp(mcp: Mcp): { canQuery: boolean; reason?: string } {
 /**
  * Connect to MCP and fetch capabilities
  */
-export async function fetchMcpCapabilities(mcp: Mcp): Promise<{
+export async function fetchMcpCapabilities(mcp: Mcp, auth: MCPAuthConfig | undefined): Promise<{
     tools: Array<{ name: string; description?: string }>;
     resources: Array<{ name: string; uri: string; description?: string }>;
     prompts: Array<{ name: string; description?: string }>;
 } | null> {
-    try {
-        // Parse auth config if available
-        let authConfig: UpstreamAuthConfig | undefined;
-        if (mcp.master_auth_config) {
-            try {
-                authConfig = JSON.parse(mcp.master_auth_config);
-            } catch (error) {
-                console.error(`Failed to parse auth config: ${error}`);
-                return null;
-            }
-        }
+    const TIMEOUT_MS = 10000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-        // Build transport options with auth
-        const authOptions = buildAuthOptions(authConfig);
-        const transportOptions: any = {};
-        if (authOptions.headers) {
-            transportOptions.headers = authOptions.headers;
-        }
-        if (authOptions.httpsAgent) {
-            transportOptions.httpsAgent = authOptions.httpsAgent;
-        }
+    try {
+        // Build transport options with auth (already in correct SSEClientTransportOptions format)
+        const authOptions = buildAuthOptions(auth);
 
         // Create client
         const transport = new SSEClientTransport(
             new URL(mcp.url),
-            transportOptions
+            authOptions
         );
 
         const client = new Client(
@@ -73,31 +60,43 @@ export async function fetchMcpCapabilities(mcp: Mcp): Promise<{
             }
         );
 
-        // Connect with timeout
-        await Promise.race([
-            client.connect(transport),
-            new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Connection timeout")), 5000)
-            ),
-        ]);
+        try {
+            await client.connect(transport, { signal: controller.signal });
 
-        // Fetch capabilities
-        const [toolsResult, resourcesResult, promptsResult] = await Promise.all([
-            client.listTools().catch(() => ({ tools: [] })),
-            client.listResources().catch(() => ({ resources: [] })),
-            client.listPrompts().catch(() => ({ prompts: [] })),
-        ]);
+            // Fetch capabilities with timeout check
+            if (controller.signal.aborted) {
+                throw new Error(`Timeout after ${TIMEOUT_MS}ms`);
+            }
 
-        // Close connection
-        await client.close();
+            const [toolsResult, resourcesResult, promptsResult] = await Promise.all([
+                client.listTools().catch(() => ({ tools: [] })),
+                client.listResources().catch(() => ({ resources: [] })),
+                client.listPrompts().catch(() => ({ prompts: [] })),
+            ]);
 
-        return {
-            tools: toolsResult.tools || [],
-            resources: resourcesResult.resources || [],
-            prompts: promptsResult.prompts || [],
-        };
+            // Close connection
+            await client.close();
+
+            return {
+                tools: toolsResult.tools || [],
+                resources: resourcesResult.resources || [],
+                prompts: promptsResult.prompts || [],
+            };
+        } catch (error) {
+            try {
+                await client.close();
+            } catch { }
+            throw error;
+        }
     } catch (error: any) {
-        console.error(`Failed to fetch capabilities: ${error.message}`);
+        if (error.name === "AbortError" || controller.signal.aborted) {
+            console.error(`Failed to fetch capabilities: Timeout after ${TIMEOUT_MS}ms`);
+        } else {
+            const errorMessage = error.response?.data?.error || error.message;
+            console.error(`Failed to fetch capabilities: ${errorMessage}`);
+        }
         return null;
+    } finally {
+        clearTimeout(timeoutId);
     }
 }

@@ -1,39 +1,33 @@
 {
   "name": "mcpbundler",
-  "version": "0.7.0",
+  "version": "0.1.0",
   "description": "MCP Bundler - Aggregate multiple MCP servers into one",
   "license": "MIT",
-  "author": "Anthropic, PBC (https://anthropic.com)",
-  "homepage": "https://github.com/yourusername/mcpbundler",
-  "bugs": "https://github.com/yourusername/mcpbundler/issues",
+  "author": "Joaquín van den Bemt",
+  "homepage": "https://github.com/jrbemt/mcpbundler",
+  "bugs": "https://github.com/jrbemt/mcpbundler/issues",
   "type": "module",
   "bin": {
-    "mcpbundler": "dist/cli/index.js"
+    "mcpbundler": "dist/src/cli/index.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
     "dev": "npm run db:deploy:sqlite && concurrently --prefix none \"npm run watch\" \"nodemon --watch dist --exec node dist/src/main.js\"",
-    "cli": "npm run build && node dist/src/cli/index.js",
-    "start": "npm run build && node dist/src/main.js",
+    "cli": "npm run build --silent && node dist/src/cli/index.js",
+    "start": "npm run build --silent && node dist/src/main.js",
     "build": "tsc && shx chmod +x dist/**/*.js && npx copyfiles \"prisma/**/*\" \"dist/\"",
     "watch": "tsc --watch",
     "test": "npm run build && vitest run",
-    "test:watch": "npm run build && vitest",
-    "test:integration": "npm run build && vitest run --config vitest.integration.config.ts",
-    "test:unit": "npm run build && vitest run --config vitest.unit.config.ts",
-    "test:coverage": "npm run build && vitest run --coverage",
     "db:sqlite:deploy": "dotenv -e .env -- prisma db push --skip-generate --accept-data-loss --schema=./prisma/sqlite/schema.prisma",
     "db:sqlite:migrate": "dotenv -e .env -- prisma migrate dev --schema=./prisma/sqlite/schema.prisma",
     "db:postgres:migrate": "dotenv -e .env -- prisma migrate dev --schema=./prisma/postgres/schema.prisma",
     "db:sqlite:studio": "dotenv -e .env -- prisma studio --schema=./prisma/sqlite/schema.prisma",
-    "db:postgres:studio": "dotenv -e .env -- prisma studio --schema=./prisma/postgres/schema.prisma",
-    "pm2:logs": "pm2 logs mcpbundler",
-    "pm2:logs:flush": "pm2 flush mcpbundler"
+    "db:postgres:studio": "dotenv -e .env -- prisma studio --schema=./prisma/postgres/schema.prisma"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.2",
+    "@modelcontextprotocol/sdk": "^1.25.1",
     "@prisma/client": "^6.19.0",
     "axios": "^1.12.2",
     "commander": "^14.0.2",
@@ -47,8 +41,8 @@
     "minimatch": "^10.0.3",
     "pino": "^9.8.0",
     "pino-pretty": "^13.1.1",
-    "pm2": "^6.0.11",
-    "prisma": "^6.18.0"
+    "prisma": "^6.18.0",
+    "zod": "^4.2.1"
   },
   "devDependencies": {
     "@types/diff": "^8.0.0",
@@ -63,8 +57,6 @@
     "msw": "^2.4.9",
     "nodemon": "^3.1.10",
     "shx": "^0.4.0",
-    "supertest": "^7.0.0",
-    "typescript": "^5.9.2",
-    "vitest": "^4.0.5"
+    "typescript": "^5.9.2"
   }
 }

@@ -11,7 +11,7 @@ export async function listMcpCommand(options: ListOptions): Promise<void> {
   try {
     const mcps = await client.listMcps();
 
-    banner(" MCP Servers ", { bg: BG_COLORS.CYAN });
+    banner(" MCP Servers ", { bg: BG_COLORS.GREEN });
     console.group();
 
     if (mcps.length === 0) {
@@ -23,18 +23,19 @@ export async function listMcpCommand(options: ListOptions): Promise<void> {
     const tableData = mcps.map(mcp => ({
       Namespace: mcp.namespace,
       URL: mcp.url,
-      Author: mcp.author,
+      Author: mcp.createdBy?.id || "Unknown",
       Version: mcp.version,
       Stateless: mcp.stateless ? "Yes" : "No",
-      Auth: mcp.auth_strategy || "NONE",
-      Created: new Date(mcp.created_at).toLocaleString(),
+      Auth: mcp.authStrategy || "NONE",
+      Created: new Date(mcp.createdAt).toLocaleString(),
     }));
 
     console.table(tableData);
     console.groupEnd();
     console.log()
   } catch (error: any) {
-    console.error(`Failed to list MCPs: ${error.message}`);
+    const errorMessage = error.response?.data?.error || error.message;
+    console.error(`Failed to list MCPs: ${errorMessage}`);
     process.exit(1);
   }
 }

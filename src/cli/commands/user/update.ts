@@ -2,10 +2,10 @@ import { BundlerAPIClient } from "../../utils/api-client.js";
 import { banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface UpdateOptions {
-  token: string;
   name?: string;
   contact?: string;
   department?: string;
+  token: string;
   host: string;
 }
 
@@ -17,12 +17,11 @@ export async function updateCommand(options: UpdateOptions): Promise<void> {
 
   try {
     const client = new BundlerAPIClient(options.host, options.token);
-    const updates: any = {};
-    if (options.name) updates.name = options.name;
-    if (options.contact) updates.contact = options.contact;
-    if (options.department) updates.department = options.department;
-
-    const result = await client.updateOwnProfile(updates);
+    const result = await client.updateOwnProfile({
+      name: options.name,
+      contact: options.contact,
+      department: options.department
+    });
 
     banner("Profile Updated Successfully", { bg: BG_COLORS.GREEN });
 

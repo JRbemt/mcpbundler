@@ -19,18 +19,19 @@ export async function revokeCreatedCommand(options: RevokeCreatedOptions): Promi
 
       const result = await client.revokeAllCreatedUsers();
 
-      banner("Users Revoked Successfully", { bg: BG_COLORS.RED });
+      banner(" Users Revoked Successfully ", { bg: BG_COLORS.RED });
 
-      console.log(`  Direct users revoked: ${result.direct_users_revoked}`);
-      console.log(`  Total users revoked (including descendants): ${result.total_revoked}\n`);
+      console.group();
+      console.log(`Users revoked: ${result.total}`);
 
-      if (result.total_revoked > 0) {
-        const tableData = result.revoked_user_ids.map((id, index) => ({
+      if (result.total > 0) {
+        const tableData = result.users.map((id, index) => ({
           "#": index + 1,
-          "User ID": id
+          "User ID": id.userId
         }));
         console.table(tableData);
       }
+      console.groupEnd();
     } else {
       // Handle single user revocation
       if (!options.userId) {
@@ -40,17 +41,18 @@ export async function revokeCreatedCommand(options: RevokeCreatedOptions): Promi
 
       const result = await client.revokeCreatedUser(options.userId);
 
-      banner("User Revoked Successfully", { bg: BG_COLORS.RED });
+      banner(" User Revoked Successfully ", { bg: BG_COLORS.RED });
+      console.group();
+      console.log(`Users revoked: ${result.total}`);
 
-      console.log(`\n  Total users revoked (including descendants): ${result.total_revoked}\n`);
-
-      if (result.total_revoked > 0) {
-        const tableData = result.revoked_user_ids.map((id, index) => ({
+      if (result.total > 0) {
+        const tableData = result.users.map((id, index) => ({
           "#": index + 1,
-          "User ID": id
+          "User ID": id.userId
         }));
         console.table(tableData);
       }
+      console.groupEnd();
     }
   } catch (error: any) {
     console.error(`Error revoking user(s): ${error.response?.data?.error || error.message}`);

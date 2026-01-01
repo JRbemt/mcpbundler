@@ -12,7 +12,7 @@ export async function listCommand(options: ListOptions): Promise<void> {
     const users = await client.listUsers(options.includeRevoked);
 
     if (users.length === 0) {
-      console.log("\nNo users found.");
+      console.log("No users found.");
       return;
     }
     // Prepare a table-friendly array
@@ -20,14 +20,14 @@ export async function listCommand(options: ListOptions): Promise<void> {
       Name: user.name,
       Contact: user.contact,
       Department: user.department || "N/A",
-      Admin: user.is_admin,
-      Created: new Date(user.created_at).toLocaleString(),
-      "Last Used": user.last_used_at ? new Date(user.last_used_at).toLocaleString() : "N/A",
-      Revoked: user.revoked_at ? new Date(user.revoked_at).toLocaleString() : "N/A",
-      "Created By": user.created_by || "N/A",
+      Admin: user.isAdmin,
+      Created: new Date(user.createdAt).toLocaleString(),
+      "Last Used": user.lastUsedAt ? new Date(user.lastUsedAt).toLocaleString() : "N/A",
+      Revoked: user.revokedAt ? new Date(user.revokedAt).toLocaleString() : "N/A",
+      "Created By": user.createdById || "N/A",
     }));
 
-    console.log(`\nFound ${users.length} user(s):\n`);
+    console.log(`Found ${users.length} user(s):`);
     console.table(tableData);
     console.log()
 

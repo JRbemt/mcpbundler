@@ -1,18 +1,60 @@
+/**
+ * Authentication Middleware - Management API security layer
+ *
+ * Provides authentication and authorization for the management REST API using
+ * Bearer token authentication with admin API keys. This middleware validates
+ * API keys, tracks usage, enforces permissions, and provides comprehensive
+ * audit logging.
+ *
+ * Authentication flow:
+ * 1. Extract Bearer token from Authorization header
+ * 2. Validate token format (must start with API_KEY_PREFIX)
+ * 3. Look up API key in database and verify it's not revoked
+ * 4. Update lastUsedAt timestamp
+ * 5. Load user permissions
+ * 6. Attach user context to req.apiAuth
+ * 7. Log authentication event for audit trail
+ *
+ * Security features:
+ * - SHA-256 hashed key storage (never plaintext in database)
+ * - Automatic key revocation support
+ * - Permission-based access control (admins bypass all checks)
+ * - Comprehensive audit logging of all auth events
+ * - AsyncLocalStorage for request context propagation
+ *
+ * Response codes:
+ * - 401: Missing, invalid, or revoked API key
+ * - 500: Internal authentication error
+ */
+
 import { Request, Response, NextFunction } from 'express';
 import { PrismaClient, PermissionType } from '@prisma/client';
 import { ApiUserRepository } from '../database/repositories/ApiUserRepository.js';
 import logger from '../../utils/logger.js';
 import { auditApiLog, AuditApiAction } from '../../utils/audit-log.js';
-import { API_KEY_PREFIX } from '../../utils/encryption.js';
+import { API_KEY_PREFIX } from '../../core/auth/encryption.js';
 import { AsyncLocalStorage } from 'async_hooks';
 
-
-
-export const STORE = new AsyncLocalStorage<Request>();
-
 /**
- * Middleware to authenticate management API requests
- * Validates Authorization: Bearer header with admin API keys
+ * AsyncLocalStorage for request context propagation
+ * Allows audit logging to access request context from anywhere in the call stack
+ */
+export const STORE = new AsyncLocalStorage<Request>();
+/**
+ * Create authentication middleware for management API
+ *
+ * Factory function that creates Express middleware for authenticating API requests.
+ * The middleware validates Bearer tokens, loads user permissions, and attaches
+ * authentication context to the request object.
+ *
+ * Usage:
+ * ```typescript
+ * const authMiddleware = createAuthMiddleware(prisma);
+ * app.use('/api', authMiddleware);
+ * ```
+ *
+ * @param prisma - Prisma client instance for database access
+ * @returns Express middleware function
  */
 export function createAuthMiddleware(prisma: PrismaClient) {
   const apiKeyRepo = new ApiUserRepository(prisma);
@@ -59,7 +101,7 @@ export function createAuthMiddleware(prisma: PrismaClient) {
         action: AuditApiAction.AUTH_FAILURE,
         success: false,
         errorMessage: 'Invalid token type - expected admin API key',
-        details: { path: req.path, method: req.method, tokenPrefix: token.substring(0, 10) },
+        details: { path: req.path, method: req.method },
       }, req);
 
       res.status(401).json({
@@ -77,7 +119,7 @@ export function createAuthMiddleware(prisma: PrismaClient) {
           action: AuditApiAction.AUTH_FAILURE,
           success: false,
           errorMessage: 'Invalid or revoked API key',
-          details: { path: req.path, method: req.method, keyPrefix: token.substring(0, 15) },
+          details: { path: req.path, method: req.method },
         }, req);
 
         res.status(401).json({
@@ -86,28 +128,13 @@ export function createAuthMiddleware(prisma: PrismaClient) {
         });
         return;
       }
-
-      const userWithPermissions = await prisma.apiUser.findUnique({
-        where: { id: apiUser.id },
-        include: { permissions: true }
-      });
-
-      if (!userWithPermissions) {
-        logger.error({ userId: apiUser.id }, 'User not found after validation');
-        res.status(500).json({
-          error: 'Internal server error',
-          message: 'An error occurred during authentication',
-        });
-        return;
-      }
-
       req.apiAuth = {
         userId: apiUser.id,
         apiKey: apiUser.keyHash,
         apiKeyName: apiUser.name,
         contact: apiUser.contact,
         isAdmin: apiUser.isAdmin,
-        permissions: userWithPermissions.permissions.map(p => p.permission),
+        permissions: apiUser.permissions.map(p => p.permission),
         createdById: apiUser.createdById
       };
 
@@ -121,7 +148,7 @@ export function createAuthMiddleware(prisma: PrismaClient) {
             method: req.method,
             userId: apiUser.id,
             isAdmin: apiUser.isAdmin,
-            permissions: userWithPermissions.permissions.map(p => p.permission)
+            permissions: apiUser.permissions.map(p => p.permission)
           },
         }, req);
         next();
@@ -138,8 +165,21 @@ export function createAuthMiddleware(prisma: PrismaClient) {
 }
 
 /**
- * Helper function to check if the authenticated user has at least one of the specified permissions.
- * Admins automatically pass all permission checks.
+ * Check if authenticated user has at least one of the specified permissions
+ *
+ * Helper function for permission-based access control in route handlers.
+ * Admin users automatically pass all permission checks.
+ *
+ * @param req - Express request object (must have req.apiAuth populated by auth middleware)
+ * @param permissions - One or more permission types to check for
+ * @returns True if user is admin OR has at least one of the specified permissions
+ *
+ * @example
+ * ```typescript
+ * if (!hasPermission(req, PermissionType.USER_CREATE)) {
+ *   return res.status(403).json({ error: 'Insufficient permissions' });
+ * }
+ * ```
  */
 export function hasPermission(req: Request, ...permissions: PermissionType[]): boolean {
   if (!req.apiAuth) {
@@ -154,7 +194,13 @@ export function hasPermission(req: Request, ...permissions: PermissionType[]): b
 }
 
 /**
- * Helper function to check if the authenticated user is an admin.
+ * Check if authenticated user is an admin
+ *
+ * Helper function to check admin status. Admins have unrestricted access
+ * to all management API operations.
+ *
+ * @param req - Express request object (must have req.apiAuth populated by auth middleware)
+ * @returns True if user is an admin, false otherwise
  */
 export function isAdmin(req: Request): boolean {
   return req.apiAuth?.isAdmin ?? false;

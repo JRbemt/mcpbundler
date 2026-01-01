@@ -1,3 +1,13 @@
+/**
+ * Initialize System - Startup data initialization
+ *
+ * Idempotent system initialization that runs on startup. Creates root admin user
+ * if none exists and initializes global settings for self-service mode. Root user
+ * API key is printed to console once and never shown again.
+ *
+ * Safe to run on every startup - checks for existing admin before creating.
+ */
+
 import { PermissionType, PrismaClient } from "@prisma/client";
 import logger from "./logger.js";
 import { GlobalSettingsRepository } from "../api/database/repositories/GlobalSettingsRepository.js";
@@ -18,9 +28,8 @@ export interface SystemInitConfig {
 
 /**
  * Initializes system data on startup
- * Creates root administrator user if none exists
+ * Creates root administrator user if none exists! Ensures there is always an isAdmin account
  * Initializes global settings from provided configuration
- * Idempotent - safe to run on every startup
  */
 export async function initializeSystemData(prisma: PrismaClient, config: SystemInitConfig): Promise<void> {
   logger.info("Initializing system data");
@@ -35,7 +44,7 @@ export async function initializeSystemData(prisma: PrismaClient, config: SystemI
 
     logger.info({
       allowSelfService: config.selfService.enabled,
-      defaultPermissions: config.selfService.defaultPermissions
+      defaultSelfServicePermissions: config.selfService.defaultPermissions
     }, "Global settings initialized");
 
     // Check if any admin users exist
@@ -59,7 +68,7 @@ export async function initializeSystemData(prisma: PrismaClient, config: SystemI
       name: config.rootUser.name,
       contact: config.rootUser.email,
       isAdmin: true,
-      permissions: [],
+      permissions: Object.values(PermissionType)
     });
 
     // Log to audit log
@@ -76,17 +85,17 @@ export async function initializeSystemData(prisma: PrismaClient, config: SystemI
         isAdmin: true,
       }
     });
-
+    const n_stripes = 120;
     // Display API key to console (only shown once)
-    console.log("\n" + "=".repeat(80));
+    console.log("\n" + "=".repeat(n_stripes));
     console.log("ROOT ADMINISTRATOR CREATED");
-    console.log("=".repeat(80));
+    console.log("=".repeat(n_stripes));
     console.log(`Name:    ${apiUser.name}`);
     console.log(`Contact: ${apiUser.contact}`);
     console.log(`API Key: ${plaintextKey}`);
-    console.log("=".repeat(80));
+    console.log("=".repeat(n_stripes));
     console.log("IMPORTANT: Save this API key securely. It will not be shown again.");
-    console.log("=".repeat(80) + "\n");
+    console.log("=".repeat(n_stripes) + "\n");
 
     logger.info({
       userId: apiUser.id,
@@ -98,4 +107,34 @@ export async function initializeSystemData(prisma: PrismaClient, config: SystemI
     logger.error({ error }, "Failed to initialize system data");
     throw error;
   }
+}
+
+/**
+ * Parse comma-separated permission types from environment variable
+ */
+export function parsePermissions(value: string | undefined): PermissionType[] {
+  if (!value || value.trim() === "") {
+    return [];
+  }
+
+  const parts = value.split(",").map(p => p.trim()).filter(p => p !== "");
+  const validPermissions: PermissionType[] = [];
+  const invalidPermissions: string[] = [];
+
+  const validPermissionValues = Object.values(PermissionType);
+
+  for (const part of parts) {
+    if (validPermissionValues.includes(part as PermissionType)) {
+      validPermissions.push(part as PermissionType);
+    } else {
+      invalidPermissions.push(part);
+    }
+  }
+
+  if (invalidPermissions.length > 0) {
+    logger.error({ invalidPermissions }, `Invalid permissions: ${invalidPermissions}`);
+    throw new Error(`Invalid permissions: ${invalidPermissions}`);
+  }
+
+  return validPermissions;
 }

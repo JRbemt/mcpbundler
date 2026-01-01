@@ -1,3 +1,15 @@
+/**
+ * Audit Log - Structured audit logging for security-relevant operations
+ *
+ * Provides audit logging for both API operations (authenticated via API keys) and
+ * bundler runtime operations (session-based). Captures user identity, IP address,
+ * user agent, action type, success/failure, and optional details.
+ *
+ * Two audit contexts:
+ * - API: User CRUD, token management, credential operations, auth events
+ * - Bundler: MCP tool/resource/prompt operations, upstream connection events
+ */
+
 import { Request } from "express";
 import logger from "./logger.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -6,11 +18,11 @@ import { STORE } from "../api/middleware/auth.js";
 
 // TODO: Log all actions
 export enum AuditApiAction {
-  // Collection operations
-  COLLECTION_CREATE = "collection.create",
-  COLLECTION_UPDATE = "collection.update",
-  COLLECTION_DELETE = "collection.delete",
-  COLLECTION_VIEW = "collection.view",
+  // Bundle operations
+  BUNDLE_CREATE = "bundle.create",
+  BUNDLE_UPDATE = "bundle.update",
+  BUNDLE_DELETE = "bundle.delete",
+  BUNDLE_VIEW = "bundle.view",
 
   // Token operations
   TOKEN_CREATE = "token.create",
@@ -48,15 +60,18 @@ export enum AuditApiAction {
   WILDCARD_TOKEN_USED = "wildcard_token.used",
 }
 
-export interface AuditLogEntry {
+export interface LogEntry {
+  success?: boolean;
+  errorMessage?: string;
+  details?: Record<string, any>;
+}
+
+export interface AuditLogEntry extends LogEntry {
   action: AuditApiAction;
   apiKeyId: string;
   apiKeyName: string;
   ip: string;
   userAgent: string;
-  success?: boolean;
-  errorMessage?: string;
-  details?: Record<string, any>;
 }
 
 type ContextKeys = "ip" | "userAgent" | "apiKeyId" | "apiKeyName";
@@ -77,12 +92,9 @@ export enum AuditBundlerAction {
   UPSTREAM_DISCONNECT = "upstream.disconnect",
 }
 
-export interface AuditBundlerEntry {
+export interface AuditBundlerEntry extends LogEntry {
   action: AuditBundlerAction;
   sessionId: string;
-  success?: boolean;
-  errorMessage?: string;
-  details?: Record<string, any>;
 }
 
 export function auditApiLog(entry: Omit<AuditLogEntry, ContextKeys>, req: Request): void;
@@ -99,11 +111,12 @@ export function auditApiLog(
 
   const fullEntry: AuditLogEntry =
     req
-      ? { ...entry, ...getAuditContext(req) }
+      ? { ...entry, ...getApiAuditContext(req) }
       : (entry as AuditLogEntry);
 
   const logEntry = {
     audit: true,
+    system: "api",
     timestamp: new Date().toISOString(),
     ...fullEntry,
     success: fullEntry?.success ?? true,
@@ -130,7 +143,7 @@ export function auditApiLogSession(entry: Omit<AuditLogEntry, ContextKeys>) {
 /**
  * Helper to extract audit context from Express request
  */
-export function getAuditContext(req: Request): Pick<AuditLogEntry, ContextKeys> {
+export function getApiAuditContext(req: Request): Pick<AuditLogEntry, ContextKeys> {
   return {
     ip: req.ip ?? req.socket.remoteAddress ?? "unknown",
     userAgent: req.headers["user-agent"] ?? "unkown",
@@ -147,7 +160,7 @@ export function getAuditContext(req: Request): Pick<AuditLogEntry, ContextKeys> 
 export function auditBundlerLog(entry: AuditBundlerEntry): void {
   const logEntry = {
     audit: true,
-    bundler: true,
+    system: "bundler",
     timestamp: new Date().toISOString(),
     ...entry,
     success: entry?.success ?? true,

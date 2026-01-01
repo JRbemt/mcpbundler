@@ -1,3 +1,18 @@
+/**
+ * Session - Per-client connection state and request routing
+ *
+ * Represents a single client connection to the bundler. Routes MCP requests to
+ * the appropriate upstream servers, aggregates responses, enforces permissions,
+ * and handles namespace collisions.
+ *
+ * Each session uses four specialized components: PermissionManager for access control,
+ * NamespaceResolver for collision handling, SessionActivityMonitor for idle timeouts,
+ * and UpstreamEventCoordinator for list change notifications.
+ *
+ * Namespaces are prefixed on all items: tools use namespace/name format, resources
+ * use mcp://namespace/r/uri, and prompts use namespace/name. Resumption tokens are
+ * maintained per-upstream for long-running operations.
+ */
 
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
@@ -29,7 +44,7 @@ import { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { Upstream, UPSTREAM_EVENTS } from "./upstream.js";
 import { PermissionManager } from "./components/PermissionManager.js";
 import { NamespaceResolver, ToolNameHashMode } from "./components/NamespaceResolver.js";
-import { SessionActivityMonitor } from "./components/SessionActivityMonitor.js";
+import { IDLE_TIMEOUT_EVENT, SessionActivityMonitor } from "./components/SessionActivityMonitor.js";
 import { UpstreamEventCoordinator } from "./components/UpstreamEventCoordinator.js";
 
 // Re-export for backward compatibility
@@ -63,8 +78,8 @@ export const SESSION_EVENTS = {
 } as const;
 
 /**
-* Session encapsulates per-connection state and operations.
-*/
+ * Session encapsulates per-connection state and operations.
+ */
 export class Session extends EventEmitter {
     readonly id: string
     readonly transport: SSEServerTransport
@@ -73,12 +88,12 @@ export class Session extends EventEmitter {
 
     private resumptionTokens: Map<string, Map<Resumable, string>> = new Map()
 
-    private errorOnListIfUpstreamDisconnected = true;
+    // Whether operations like list should throw errors if any upstream is disconnected
+    private errorOnListIfUpstreamDisconnected = false;
+
     private upstreamTimeout: number = 5000;
 
-    private collectionId: string | null;
-    private userId: string | null;
-
+    private bundleId: string | null;
     // Permission management
     private permissionManager: PermissionManager;
 
@@ -93,23 +108,23 @@ export class Session extends EventEmitter {
 
     constructor(
         transport: SSEServerTransport,
-        collectionId: string | null = null,
-        userId: string | null = null,
+        bundleId: string | null = null,
         permissionManager: PermissionManager = new PermissionManager(),
         namespaceResolver: NamespaceResolver = new NamespaceResolver(),
         activityMonitor?: SessionActivityMonitor,
-        eventCoordinator?: UpstreamEventCoordinator
+        eventCoordinator?: UpstreamEventCoordinator,
+        errorOnListIfUpstreamDisconnected: boolean = false,
     ) {
         super();
         this.id = transport.sessionId;
         this.transport = transport;
         this.upstreams = [];
-        this.collectionId = collectionId;
-        this.userId = userId;
+        this.bundleId = bundleId;
         this.permissionManager = permissionManager;
         this.namespaceResolver = namespaceResolver;
         this.activityMonitor = activityMonitor || new SessionActivityMonitor(this.id);
         this.eventCoordinator = eventCoordinator || new UpstreamEventCoordinator(this.id);
+        this.errorOnListIfUpstreamDisconnected = errorOnListIfUpstreamDisconnected;
 
         // Wire up activity tracking
         [
@@ -125,29 +140,23 @@ export class Session extends EventEmitter {
         });
 
         // Wire up idle timeout handler
-        this.activityMonitor.on("idle_timeout", () => {
+        this.activityMonitor.on(IDLE_TIMEOUT_EVENT, () => {
             this.close().catch(err => {
                 logger.error({ sessionId: this.id, err }, "Error closing idle session");
             });
         });
 
-        // Forward event coordinator notifications to session
-        this.eventCoordinator.on("notify_tools_changed", (notification) => {
-            this.emit("notify_tools_changed", notification);
-            this.transport.send(notification).catch((err) => {
-                logger.warn({ sessionId: this.id, err }, "Failed to send tools notification");
-            });
-        });
-        this.eventCoordinator.on("notify_resources_changed", (notification) => {
-            this.emit("notify_resources_changed", notification);
-            this.transport.send(notification).catch((err) => {
-                logger.warn({ sessionId: this.id, err }, "Failed to send resources notification");
-            });
-        });
-        this.eventCoordinator.on("notify_prompts_changed", (notification) => {
-            this.emit("notify_prompts_changed", notification);
-            this.transport.send(notification).catch((err) => {
-                logger.warn({ sessionId: this.id, err }, "Failed to send prompts notification");
+        // Wire up upstream change notifications to downstream client 
+        [
+            UPSTREAM_EVENTS.TOOLS_LIST_CHANGED,
+            UPSTREAM_EVENTS.RESOURCES_LIST_CHANGED,
+            UPSTREAM_EVENTS.PROMPTS_LIST_CHANGED,
+        ].forEach((e) => {
+            this.eventCoordinator.on(e, (notification) => {
+                this.emit(e, notification);
+                this.transport.send(notification).catch((err) => {
+                    logger.warn({ sessionId: this.id, err }, `Failed to send ${e} notification`);
+                });
             });
         });
     }
@@ -195,7 +204,7 @@ export class Session extends EventEmitter {
     private ensureConnected(namespace: string) {
         const state = this.upstreams.find(u => u.getNamespace() === namespace);
         if (!state?.isConnected()) {
-            throw new Error(`Upstream disconnected ${state?.getNamespace()}`)
+            throw new Error(`Upstream MCP disconnected: ${state?.getNamespace()}`)
         }
     }
 
@@ -256,7 +265,7 @@ export class Session extends EventEmitter {
                     sessionId: this.getId(),
                     success: true,
                     details: {
-                        collectionId: this.collectionId,
+                        bundleId: this.bundleId,
                         namespace: up.getNamespace(),
                         host: up.getUrl(),
                         count: result?.tools?.length || 0,
@@ -271,6 +280,10 @@ export class Session extends EventEmitter {
                     continue;
                 }
                 for (const t of result.tools) {
+                    // Filter by permissions
+                    if (!this.permissionManager.isToolAllowed(up, t.name)) {
+                        continue;
+                    }
                     const namespacedTool = this.namespaceResolver.namespaceTool(up.getNamespace(), t);
                     tools.push(namespacedTool);
                 }
@@ -283,7 +296,7 @@ export class Session extends EventEmitter {
                     success: false,
                     errorMessage: `Failed to list tools from upstream: ${msg}`,
                     details: {
-                        collectionId: this.collectionId,
+                        bundleId: this.bundleId,
                         namespace: up.config.namespace,
                     },
                 });
@@ -344,7 +357,7 @@ export class Session extends EventEmitter {
                 sessionId: this.getId(),
                 success: true,
                 details: {
-                    collectionId: this.collectionId,
+                    bundleId: this.bundleId,
                     namespace,
                     method,
                 },
@@ -359,7 +372,7 @@ export class Session extends EventEmitter {
                 success: false,
                 errorMessage: `Failed to call tool: ${msg}`,
                 details: {
-                    collectionId: this.collectionId,
+                    bundleId: this.bundleId,
                     method: params.name,
                 },
             });
@@ -392,13 +405,17 @@ export class Session extends EventEmitter {
                     sessionId: this.getId(),
                     success: true,
                     details: {
-                        collectionId: this.collectionId,
+                        bundleId: this.bundleId,
                         namespace: up.getNamespace(),
                         count: arr.length,
                     },
                 });
 
                 for (const r of arr) {
+                    // Filter by permissions
+                    if (!this.permissionManager.isResourceAllowed(up, r.uri)) {
+                        continue;
+                    }
                     // Keep everything, rewrite only the URI
                     resources.push({ ...r, uri: this.namespaceResolver.namespaceResource(up.getNamespace(), r.uri) });
                 }
@@ -410,7 +427,7 @@ export class Session extends EventEmitter {
                     success: false,
                     errorMessage: `Failed to list resources from upstream: ${msg}`,
                     details: {
-                        collectionId: this.collectionId,
+                        bundleId: this.bundleId,
                         namespace: up.getNamespace(),
                     },
                 });
@@ -457,7 +474,7 @@ export class Session extends EventEmitter {
                 sessionId: this.getId(),
                 success: true,
                 details: {
-                    collectionId: this.collectionId,
+                    bundleId: this.bundleId,
                     namespace: namespace,
                     uri: method,
                 },
@@ -473,7 +490,7 @@ export class Session extends EventEmitter {
                 success: false,
                 errorMessage: `Failed to read resource: ${msg}`,
                 details: {
-                    collectionId: this.collectionId,
+                    bundleId: this.bundleId,
                     uri: params.uri,
                 },
             });
@@ -509,7 +526,7 @@ export class Session extends EventEmitter {
                     sessionId: this.getId(),
                     success: true,
                     details: {
-                        collectionId: this.collectionId,
+                        bundleId: this.bundleId,
                         host: up.getUrl(),
                         namespace: up.getNamespace(),
                         count: arr.length,
@@ -517,6 +534,10 @@ export class Session extends EventEmitter {
                 });
 
                 for (const t of arr) {
+                    // Filter by permissions - check if the base URI pattern is allowed
+                    if (!this.permissionManager.isResourceAllowed(up, t.uriTemplate)) {
+                        continue;
+                    }
                     // Keep everything, rewrite only the URI
                     resourceTemplates.push({
                         ...t,
@@ -531,7 +552,7 @@ export class Session extends EventEmitter {
                     success: false,
                     errorMessage: `Failed to list resource templates: ${msg}`,
                     details: {
-                        collectionId: this.collectionId,
+                        bundleId: this.bundleId,
                         namespace: up.config.namespace,
                     },
                 });
@@ -573,12 +594,16 @@ export class Session extends EventEmitter {
                     sessionId: this.getId(),
                     success: true,
                     details: {
-                        collectionId: this.collectionId,
+                        bundleId: this.bundleId,
                         namespace: up.getNamespace(),
                         count: arr.length,
                     },
                 });
                 for (const p of arr) {
+                    // Filter by permissions
+                    if (!this.permissionManager.isPromptAllowed(up, p.name)) {
+                        continue;
+                    }
                     prompts.push({ ...p, name: this.namespaceResolver.namespacePrompt(up.getNamespace(), p.name) });
                 }
             } catch (e) {
@@ -589,7 +614,7 @@ export class Session extends EventEmitter {
                     success: false,
                     errorMessage: `Failed to list prompts: ${msg}`,
                     details: {
-                        collectionId: this.collectionId,
+                        bundleId: this.bundleId,
                         namespace: up.getNamespace(),
                     },
                 });
@@ -633,7 +658,7 @@ export class Session extends EventEmitter {
                 sessionId: this.getId(),
                 success: true,
                 details: {
-                    collectionId: this.collectionId,
+                    bundleId: this.bundleId,
                     namespace: namespace,
                     method,
                 },
@@ -648,7 +673,7 @@ export class Session extends EventEmitter {
                 success: false,
                 errorMessage: `Failed to get prompt: ${msg}`,
                 details: {
-                    collectionId: this.collectionId,
+                    bundleId: this.bundleId,
                     name: params.name,
                 },
             });
@@ -663,8 +688,6 @@ export class Session extends EventEmitter {
 
     /** Close all upstream transports and the SSEServerTransport. */
     async close(): Promise<void> {
-        this.emit(SESSION_EVENTS.SHUTDOWN);
-
         // Stop idle monitoring
         this.activityMonitor.stopMonitoring();
 
@@ -678,13 +701,13 @@ export class Session extends EventEmitter {
         }
 
         for (const up of this.upstreams) {
-            try {
-                // Only close if not stateless (stateless upstreams are shared)
-                if (!up.isStateless()) {
+            // Only close if not stateless (stateless upstreams are shared)
+            if (!up.isStateless()) {
+                try {
                     await up.close();
+                } catch (e) {
+                    logger.warn({ sessionId: this.getId(), namespace: up.config.namespace, e }, "failed to close upstream")
                 }
-            } catch (e) {
-                logger.warn({ sessionId: this.getId(), namespace: up.config.namespace, e }, "failed to close upstream transport")
             }
         }
 
@@ -692,6 +715,7 @@ export class Session extends EventEmitter {
         this.upstreams.length = 0;
         this.namespaceResolver.clearLookupTable();
         this.resumptionTokens.clear();
+        this.emit(SESSION_EVENTS.SHUTDOWN);
     }
 }
 

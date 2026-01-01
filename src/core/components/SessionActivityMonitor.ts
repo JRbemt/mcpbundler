@@ -1,5 +1,19 @@
+/**
+ * SessionActivityMonitor - Automatic idle timeout detection
+ *
+ * Monitors client activity and automatically cleans up idle sessions to prevent
+ * resource leaks. Tracks last activity timestamp and periodically checks if idle
+ * threshold is exceeded.
+ *
+ * Emits "idle_timeout" event when session exceeds the configured idle threshold
+ * (default 30 minutes). Session handles cleanup on this event. Check interval
+ * defaults to 60 seconds.
+ */
+
 import EventEmitter from "events";
 import logger from "../../utils/logger.js";
+
+export const IDLE_TIMEOUT_EVENT = "idle_timeout";
 
 /**
  * Monitors session activity and detects idle timeouts.
@@ -59,14 +73,18 @@ export class SessionActivityMonitor extends EventEmitter {
                     threshold: this.idleTimeoutMs
                 }, "Session idle timeout detected");
 
-                this.emit("idle_timeout", {
+                this.emit(IDLE_TIMEOUT_EVENT, {
                     sessionId: this.sessionId,
                     idleTimeMs: idleTime
                 });
             }
         }, this.checkIntervalMs);
 
-        logger.debug({ sessionId: this.sessionId }, "Idle monitoring started");
+        logger.debug({
+            sessionId: this.sessionId,
+            idleTimeoutMs: this.idleTimeoutMs,
+            checkIntervalMs: this.checkIntervalMs
+        }, "Idle monitoring started");
     }
 
     /**

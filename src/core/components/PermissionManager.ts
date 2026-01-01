@@ -1,3 +1,18 @@
+/**
+ * PermissionManager - Per-MCP permission enforcement
+ *
+ * Enforces granular access control for tools, resources, and prompts at the per-MCP
+ * level. Each MCP in a bundle has its own allow-lists for each capability type.
+ *
+ * Three access patterns:
+ * - ["*"]: Allow all (default)
+ * - []: Deny all
+ * - ["name1", "name2"]: Allow specific names (supports regex patterns)
+ *
+ * Empty arrays deny all access. Patterns support exact matches, wildcard (*), and
+ * regex expressions for flexible permission rules.
+ */
+
 import { Upstream } from "../upstream.js";
 import logger from "../../utils/logger.js";
 
@@ -32,7 +47,7 @@ export class PermissionManager {
         const permissions = upstream.config.permissions;
         if (!permissions) return true;
 
-        const allowed = permissions.allowed_tools;
+        const allowed = permissions.allowedTools;
         if (allowed.length === 0) return false;
         return this.matchesPattern(toolName, allowed);
     }
@@ -45,7 +60,7 @@ export class PermissionManager {
         const permissions = upstream.config.permissions;
         if (!permissions) return true;
 
-        const allowed = permissions.allowed_resources;
+        const allowed = permissions.allowedResources;
         if (allowed.length === 0) return false;
         return this.matchesPattern(resourceUri, allowed);
     }
@@ -58,7 +73,7 @@ export class PermissionManager {
         const permissions = upstream.config.permissions;
         if (!permissions) return true;
 
-        const allowed = permissions.allowed_prompts;
+        const allowed = permissions.allowedPrompts;
         if (allowed.length === 0) return false;
         return this.matchesPattern(promptName, allowed);
     }

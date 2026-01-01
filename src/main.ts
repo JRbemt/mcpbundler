@@ -2,10 +2,10 @@
 
 /**
  * Main entry point for this MCP Bundler server application
- * Sets up environment, database, and starts the server. 
- * 
- * This implementation builds also a management API for collections and tokens.
- * If you want just the bundler, consider using `src/core/bundler.ts` instead (with a custom CollectionResolver implementation).
+ * Sets up environment, database, and starts the server.
+ *
+ * This implementation builds also a management API for bundles and tokens.
+ * If you want just the bundler, consider using `src/core/bundler.ts` instead (with a custom bundle resolver implementation).
  */
 
 import { config } from "dotenv";
@@ -19,16 +19,16 @@ logger.debug(`.ENV initialized: [${Object.keys(output.parsed ?? {}).join(", ")}]
 import express from "express";
 import { BundlerConfigSchema } from "./core/config/schemas.js";
 import { BundlerServer } from "./core/bundler.js";
-import { CollectionResolver } from "./core/collection-resolver.js";
+import { DBBundleResolver } from "./core/bundle-resolver.js";
 import { PrismaClient, PermissionType } from "@prisma/client";
-import { createCollectionRoutes } from "./api/routes/collections.js";
-import { createTokenRoutes } from "./api/routes/tokens.js";
+import { createBundleRoutes } from "./api/routes/bundles.js";
+import { createBundleTokenRoutes } from "./api/routes/credentials.js";
 import { createMcpRoutes } from "./api/routes/mcps.js";
 import { createUserRoutes } from "./api/routes/users.js";
 import { createPermissionRoutes } from "./api/routes/permissions.js";
-import { validateEncryptionKey } from "./utils/encryption.js";
+import { validateEncryptionKey } from "./core/auth/encryption.js";
 import { createAuthMiddleware } from "./api/middleware/auth.js";
-import { initializeSystemData, SystemInitConfig } from "./utils/initialize-system.js";
+import { initializeSystemData, parsePermissions, SystemInitConfig } from "./utils/initialize-system.js";
 
 
 const CONFIG = {
@@ -48,37 +48,6 @@ const CONFIG = {
       wildcard_token: process.env.RESOLVER_WILDCARD_TOKEN || "",
     }
   }
-}
-
-/**
- * Parse comma-separated permission types from environment variable
- */
-function parsePermissions(value: string | undefined): PermissionType[] {
-  if (!value || value.trim() === "") {
-    return [];
-  }
-
-  const parts = value.split(",").map(p => p.trim()).filter(p => p !== "");
-  const validPermissions: PermissionType[] = [];
-  const invalidPermissions: string[] = [];
-
-  const validPermissionValues = Object.values(PermissionType);
-
-  logger.info(validPermissionValues)
-  for (const part of parts) {
-    if (validPermissionValues.includes(part as PermissionType)) {
-      validPermissions.push(part as PermissionType);
-    } else {
-      invalidPermissions.push(part);
-    }
-  }
-
-  if (invalidPermissions.length > 0) {
-    logger.error({ invalidPermissions }, `Invalid permissions in SELF_SERVICE_DEFAULT_PERMISSIONS: ${invalidPermissions}`);
-    throw new Error(`Invalid permissions in SELF_SERVICE_DEFAULT_PERMISSIONS: ${invalidPermissions}`);
-  }
-
-  return validPermissions;
 }
 
 /**
@@ -103,7 +72,7 @@ if (CONFIG.resolver.wildcard.allow_wildcard_token) {
     throw new Error("Wildcard token must be configured when RESOLVER_WILDCARD_ALLOW is enabled");
   }
   logger.warn(`Wildcard token is enabled - this grants unrestricted access to all pre-authenticated (auth-strategy=MASTER|NONE) MCPs with a single token`);
-  logger.info(`Collection-Wildcard-Token:\"${CONFIG.resolver.wildcard.wildcard_token}\"`)
+  logger.info(`Bundle-Wildcard-Token:\"${CONFIG.resolver.wildcard.wildcard_token}\"`)
 }
 
 /**
@@ -143,7 +112,7 @@ export async function main() {
       }
     });
 
-    const resolver = new CollectionResolver(prisma, CONFIG.resolver.wildcard);
+    const resolver = new DBBundleResolver(prisma, CONFIG.resolver.wildcard);
     const bundlerServer = new BundlerServer(validatedConfig, resolver);
 
     // Apply SQLite optimizations for better concurrency
@@ -169,12 +138,10 @@ export async function main() {
       next();
     });
 
-    // Mount routes in correct order
-    // User routes FIRST (they handle auth internally for /self endpoint)
-    apiRouter.use("/users", authMiddleware, createUserRoutes(prisma));
-    apiRouter.use("/collections", authMiddleware, createCollectionRoutes(prisma));
-    apiRouter.use("/tokens", authMiddleware, createTokenRoutes(prisma));
+    apiRouter.use("/bundles", authMiddleware, createBundleRoutes(prisma));
+    apiRouter.use("/credentials", createBundleTokenRoutes(prisma));
     apiRouter.use("/mcps", authMiddleware, createMcpRoutes(prisma));
+    apiRouter.use("/users", createUserRoutes(authMiddleware, prisma));
     apiRouter.use("/permissions", createPermissionRoutes(authMiddleware, prisma));
     app.use("/api", apiRouter);
 

@@ -1,3 +1,18 @@
+/**
+ * UpstreamEventCoordinator - Upstream notification management and debouncing
+ *
+ * Subscribes to list change notifications from all upstream MCPs in a session and
+ * forwards them to the client. Implements debouncing to coalesce rapid changes into
+ * single notifications (default 500ms).
+ *
+ * Listens for three event types:
+ * - tools_list_changed: Tool definitions updated
+ * - resources_list_changed: Resource list updated
+ * - prompts_list_changed: Prompt list updated
+ *
+ * Maintains event listener references for proper cleanup on session close.
+ */
+
 import EventEmitter from "events";
 import { Upstream, UPSTREAM_EVENTS } from "../upstream.js";
 import logger from "../../utils/logger.js";

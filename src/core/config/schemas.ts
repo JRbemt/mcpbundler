@@ -1,18 +1,37 @@
+/**
+ * Configuration Schemas - Zod validation schemas for bundler configuration
+ *
+ * Defines type-safe configuration schemas for the bundler server, upstream MCPs,
+ * authentication methods, and permission models. Uses Zod for runtime validation
+ * and TypeScript type inference.
+ *
+ * Key schemas:
+ * - BundlerConfig: Server settings (host, port, concurrency, timeouts)
+ * - UpstreamConfig: MCP server definitions with auth and permissions
+ * - UpstreamAuthConfig: Six auth methods (none, bearer, basic, api_key, oauth2, mtls)
+ * - AuthStrategy: How to resolve credentials (MASTER, USER_SET, NONE)
+ * - McpPermissions: Granular tool/resource/prompt access control
+ */
+
 import { z } from "zod";
 
 export type BundlerConfig = z.infer<typeof BundlerConfigSchema>;
-export type UpstreamConfig = z.infer<typeof UpstreamMCPConfigSchema>;
-export type UpstreamAuthConfig = z.infer<typeof UpstreamAuthConfigSchema>;
+
+export type MCPConfig = z.infer<typeof MCPConfigSchema>;
+export type MCPAuthConfig = z.infer<typeof MCPAuthConfigSchema>;
 export type AuthStrategy = z.infer<typeof AuthStrategySchema>;
 export type McpPermissions = z.infer<typeof McpPermissionsSchema>;
-export type CollectionResponse = z.infer<typeof CollectionResponseSchema>;
 
-/***
- * Service Router Configuration
- * - Validates and parses configuration from environment variables or defaults.
- * - Configuration includes service name, version, host, port, and timeout.
- * - Extendable for additional settings like upstream providers, max sessions, etc.
- * - Uses Zod for schema validation and type inference.
+export type Bundle = z.infer<typeof Bundle>;
+
+
+const ConcurrencySchema = z.object({
+    max_concurrent: z.number().min(1).default(100),
+    idle_timeout_ms: z.number().min(0).default(5 * 60 * 1000),
+})
+
+/**
+ * Bundler server configuration schema
  */
 export const BundlerConfigSchema = z.object({
     name: z.string(),
@@ -20,16 +39,15 @@ export const BundlerConfigSchema = z.object({
     host: z.string(),
     port: z.number(),
 
-    concurrency: z.object({
-        max_sessions: z.number().min(1).default(100),
-        idle_timeout_ms: z.number().min(0).default(5 * 60 * 1000),
-    }).default({}),
+    concurrency: ConcurrencySchema
+        .optional()
+        .default(ConcurrencySchema.parse({}))
 });
 
 
 /**
-* Authentication schemas for upstream MCP servers
-*/
+ * Authentication method enumeration
+ */
 export const AuthMethodSchema = z.enum([
     'none',
     'bearer',
@@ -39,7 +57,13 @@ export const AuthMethodSchema = z.enum([
     'mtls'
 ]);
 
-export const UpstreamAuthConfigSchema = z.discriminatedUnion('method', [
+/**
+ * Upstream authentication configuration schema
+ *
+ * Discriminated union supporting four auth methods: none, bearer, basic,
+ * api_keys. Each method has its own required fields.
+ */
+export const MCPAuthConfigSchema = z.discriminatedUnion('method', [
     z.object({
         method: z.literal('none'),
     }),
@@ -56,79 +80,73 @@ export const UpstreamAuthConfigSchema = z.discriminatedUnion('method', [
         method: z.literal('api_key'),
         key: z.string(),
         header: z.string().default('X-API-Key'),
-    }),
-    z.object({
-        method: z.literal('oauth2'),
-        access_token: z.string(),
-        refresh_token: z.string().optional(),
-        expires_at: z.number().optional(),
-    }),
-    z.object({
-        method: z.literal('mtls'),
-        client_cert: z.string(),  // PEM encoded
-        client_key: z.string(),   // PEM encoded
-        ca_cert: z.string().optional(),
-    }),
+    })
 ]);
 
 /**
-* Auth strategy for MCPs in collections
-*/
-export const AuthStrategySchema = z.enum(['MASTER', 'TOKEN_SPECIFIC', 'NONE']);
+ * Auth strategy for MCPs in bundles
+ *
+ * - MASTER: Use shared auth config from master MCP record
+ * - USER_SET: Use per-token credentials from McpCredential table
+ * - NONE: No authentication required
+ */
+export const AuthStrategySchema = z.enum(['MASTER', 'USER_SET', 'NONE']);
 
 /**
-* Per-MCP permissions schema
-* - Use ["*"] for ALL (allow all tools/resources/prompts)
-* - Use [] for NONE (deny all)
-* - Use specific names for granular control
-*/
+ * Per-MCP permissions schema
+ *
+ * Controls which tools, resources, and prompts clients can access from each MCP.
+ * - Use ["*"] for ALL (allow everything)
+ * - Use [] for NONE (deny everything)
+ * - Use specific names for granular control (e.g., ["read_file", "write_file"])
+ */
 export const McpPermissionsSchema = z.object({
-    allowed_tools: z.array(z.string()).default(["*"]),
-    allowed_resources: z.array(z.string()).default(["*"]),
-    allowed_prompts: z.array(z.string()).default(["*"])
+    allowedTools: z.array(z.string()).default(["*"]),
+    allowedResources: z.array(z.string()).default(["*"]),
+    allowedPrompts: z.array(z.string()).default(["*"])
 });
 
 
 /**
-* Upstream provider definitions
-*/
-export const UpstreamMCPConfigSchema = z.object({
-    /** The namespace of the upstream MCP, e.g. "files", "notion", etc. */
-    namespace: z.string().min(1),
-    /** A logical ID of the bundler/router as seen by the provider (optional semantics). */
-    bundlerId: z.string().min(1).optional(),
+ * Upstream MCP server configuration schema
+ *
+ * Complete definition for an MCP server including connection details, auth strategy,
+ * credentials, metadata, and permissions.
+ */
+export const MCPConfigSchema = z.object({
+    /** The namespace of the upstream MCP, e.g. "files", "notion", "github-api". Must match pattern: [A-Za-z0-9_.-]+ (no consecutive underscores) */
+    namespace: z.string()
+        .min(1)
+        .regex(/^(?!.*__)([A-Za-z0-9_.-]+)$/, "Namespace must contain only letters, digits, underscores, dots, and hyphens (no consecutive underscores)"),
     /** Base URL to the provider, e.g. "http://localhost:3001" (no trailing route). */
     url: z.string().url(),
-    /** Author of the MCP server */
-    author: z.string().min(1),
-    /** Description of the MCP server functionality */
-    description: z.string().min(1),
-    /** Version string to present as the client name when connecting. */
-    version: z.string().min(1),
+
 
     stateless: z.boolean().default(false),
 
     /** Auth strategy (how to resolve credentials) */
-    auth_strategy: AuthStrategySchema.default('MASTER'),
+    authStrategy: AuthStrategySchema.default("MASTER"),
 
     /** Authentication configuration for upstream server (resolved based on auth_strategy) */
-    auth: UpstreamAuthConfigSchema.optional(),
-
-    /** Cost per 1KB of data transferred (for metering) */
-    token_cost: z.number().positive().default(0.0),
+    auth: MCPAuthConfigSchema.optional(),
 
     /** Per-MCP permissions */
     permissions: McpPermissionsSchema.optional()
 });
 
+
+
+
 /**
-* Collection resolution response from backend /resolve endpoint
-*/
-export const CollectionResponseSchema = z.object({
-    collection_id: z.string(),
-    user_id: z.string(),
+ * Bundle resolution response schema
+ *
+ * Returned by DBBundleResolver.resolveBundle() after validating a bundle
+ * access token. Contains bundle metadata and list of accessible upstreams.
+ */
+export const Bundle = z.object({
+    bundleId: z.string(),
     name: z.string(),
-    upstreams: z.array(UpstreamMCPConfigSchema)
+    upstreams: z.array(MCPConfigSchema)
 });
 
 

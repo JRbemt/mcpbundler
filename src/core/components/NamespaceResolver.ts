@@ -1,3 +1,19 @@
+/**
+ * NamespaceResolver - Namespace collision resolution and tool name hashing
+ *
+ * Manages namespace prefixing for tools, resources, and prompts from multiple upstream
+ * MCPs. Handles name collisions by prefixing items with namespace. For long tool names,
+ * supports optional SHA-256 hashing to keep names under MCP client limits.
+ *
+ * Three hash modes:
+ * - NEVER: Always use namespace__name format
+ * - ALWAYS: Always hash tool names
+ * - THRESHOLD: Hash only if name exceeds length threshold (default 64 chars)
+ *
+ * Hashed tool names store original name in metadata and annotations for debugging.
+ * Maintains lookup table for reverse resolution.
+ */
+
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import crypto from "crypto";
 import logger from "../../utils/logger.js";

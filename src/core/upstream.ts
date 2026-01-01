@@ -1,9 +1,20 @@
+/**
+ * Upstream - Individual MCP server connection manager
+ *
+ * Manages a persistent SSE connection to a single upstream MCP server. Handles
+ * connection lifecycle, automatic reconnection with exponential backoff, notification
+ * subscriptions, and response caching. Each Upstream instance represents one MCP
+ * server in a bundle.
+ * 
+ * stateless MCP's may share a connection
+ * @see UpstreamPool
+ */
+
 import EventEmitter from "events";
-import { UpstreamConfig } from "./config/schemas.js";
+import { MCPConfig } from "./config/schemas.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import logger from "../utils/logger.js";
-import { buildAuthOptions } from "../utils/upstream-auth.js";
 import { z } from "zod";
 import {
     Progress,
@@ -29,7 +40,17 @@ import {
     ListToolsRequest
 } from "@modelcontextprotocol/sdk/types.js";
 import { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import { cached, CacheManager } from "../utils/cacheable.js"
+import { CacheManager } from "../utils/cacheable.js"
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
+import { buildAuthOptions } from "./auth/mcp-auth.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pckg = JSON.parse(
+    readFileSync(join(__dirname, "../../../package.json"), "utf-8")
+);
+
 
 export const UPSTREAM_EVENTS = {
     CONNECTED: "connected",
@@ -42,14 +63,13 @@ export const UPSTREAM_EVENTS = {
     PROMPTS_LIST_CHANGED: "prompts_list_changed",
 } as const;
 
-
 /**
- * A manager responsible for connecting and maintaining a single upstream.
+ * Upstream manages connection to a single MCP server
  */
 export class Upstream extends EventEmitter {
 
-    readonly config: UpstreamConfig;
-    private readonly client: Client;
+    readonly config: MCPConfig;
+    private client: Client;
     private transport?: SSEClientTransport;
 
     public upstreamTimeout: number = 5000;
@@ -70,29 +90,41 @@ export class Upstream extends EventEmitter {
     private prompts = new CacheManager<ListPromptsResult>({ max: 0 });
 
 
-    constructor(config: UpstreamConfig) {
+    constructor(config: MCPConfig) {
         super();
         this.config = config;
-        this.client = new Client({
-            name: config.namespace,
-            version: config.version
+        logger.debug({
+            namespace: config.namespace,
+            authType: typeof config.auth,
+            auth: config.auth
+        }, "Upstream constructor received config");
+        this.client = this.createClient();
+    }
+
+    private createClient(): Client {
+        const client = new Client({
+            name: "mcpbundler",
+            version: pckg.version,
         }, {
             capabilities: {
-
             }
         });
 
-        // Setup notification handlers for dynamic list changes
-        this.setupNotificationHandlers();
+        // Setup notification handlers for this client
+        this.setupNotificationHandlersForClient(client);
+
+        return client;
     }
 
     /**
      * Setup notification handlers for dynamic list changes
-     * Upstream servers can notify when their tools/resources/prompts change
+     *
+     * Upstream servers can notify when their tools/resources/prompts change.
+     * When notified, invalidate the corresponding cache and emit event.
      */
-    private setupNotificationHandlers() {
+    private setupNotificationHandlersForClient(client: Client) {
         // Handle tools list changed notification
-        this.client.setNotificationHandler(
+        client.setNotificationHandler(
             ToolListChangedNotificationSchema,
             async () => {
                 logger.info({ namespace: this.getNamespace() },
@@ -103,7 +135,7 @@ export class Upstream extends EventEmitter {
         );
 
         // Handle resources list changed notification
-        this.client.setNotificationHandler(
+        client.setNotificationHandler(
             ResourceListChangedNotificationSchema,
             async () => {
                 logger.info({ namespace: this.getNamespace() },
@@ -115,7 +147,7 @@ export class Upstream extends EventEmitter {
         );
 
         // Handle prompts list changed notification
-        this.client.setNotificationHandler(
+        client.setNotificationHandler(
             PromptListChangedNotificationSchema,
             async () => {
                 logger.info({ namespace: this.getNamespace() },
@@ -127,26 +159,45 @@ export class Upstream extends EventEmitter {
 
     }
 
+    /**
+     * Connect to upstream MCP server
+     *
+     * Establishes SSE connection with authentication. Sets up transport event
+     * handlers for disconnect/error. Returns true on success, false on failure.
+     *
+     * On reconnection, creates a fresh Client instance to avoid stale internal state.
+     *
+     * @returns Promise resolving to connection success status
+     */
     public async connect(): Promise<boolean> {
-        if (this.transport) {
-            logger.info({ namespace: this.getNamespace() }, "reinit transport")
+        const isReconnect = this.client !== undefined;
+        logger.info("CONNECTING")
+        if (isReconnect) {
+            logger.info({ namespace: this.getNamespace() }, "reconnecting: closing old client and creating fresh instance");
+
+            // Close old client to clean up internal state
+            try {
+                await this.client.close();
+            } catch (e) {
+                logger.warn({ namespace: this.getNamespace() }, "error closing old client during reconnect (non-fatal)");
+            }
+
+            // Create fresh client instance to avoid stale state
+            this.client = this.createClient();
         }
 
         // Build auth options from config
         const authOptions = buildAuthOptions(this.config.auth);
 
-        // Create transport with auth headers/agent
-        const transportOptions: any = {};
-        if (authOptions.headers) {
-            transportOptions.headers = authOptions.headers;
-        }
-        if (authOptions.httpsAgent) {
-            transportOptions.httpsAgent = authOptions.httpsAgent;
-        }
+        logger.info({
+            namespace: this.config.namespace,
+            authOptions,
+        }, "AUTH options")
 
+        // Create transport with auth options (already in correct SSEClientTransportOptions format)
         const transport = new SSEClientTransport(
             new URL(this.getUrl()),
-            Object.keys(transportOptions).length > 0 ? transportOptions : undefined
+            authOptions
         );
         this.transport = transport;
 
@@ -162,7 +213,7 @@ export class Upstream extends EventEmitter {
                 logger.warn({
                     namespace: this.getNamespace(),
                     url: this.getUrl(),
-                    msg,
+                    error: msg,
                 }, "onerror: upstream connection");
 
                 try {
@@ -201,7 +252,8 @@ export class Upstream extends EventEmitter {
             logger.error({
                 namespace: this.getNamespace(),
                 url: this.getUrl(),
-                authMethod: this.config.auth?.method || "none"
+                authMethod: this.config.auth?.method || "none",
+                error: e instanceof Error ? e.message : String(e)
             }, "failed to connect to upstream");
 
             this.emit(UPSTREAM_EVENTS.CONNECTION_FAILED, this);
@@ -211,6 +263,12 @@ export class Upstream extends EventEmitter {
     }
 
 
+    /**
+     * Handle upstream disconnection
+     *
+     * Cleans up transport handlers, emits disconnect event, and schedules
+     * reconnection with exponential backoff.
+     */
     private async handleDisconnect() {
         if (this.transport) {
             this.transport!.onclose = undefined;
@@ -223,6 +281,12 @@ export class Upstream extends EventEmitter {
         this.scheduleReconnect();
     }
 
+    /**
+     * Schedule reconnection with exponential backoff
+     *
+     * Uses exponential backoff capped at retryMaxTime (5000ms). Retries
+     * indefinitely until connection succeeds or upstream is closed.
+     */
     private scheduleReconnect() {
         if (this.retryTimer) return;
         const delay = Math.min(this.retryMaxTime, 1000 * 2 ** this.retryAttempts++);
@@ -256,22 +320,37 @@ export class Upstream extends EventEmitter {
         this.emit(UPSTREAM_EVENTS.RECONNECTION_ATTEMPT, this, delay);
     }
 
+    /**
+     * Get server capabilities reported by upstream
+     *
+     * @returns Server capabilities or undefined if not connected
+     */
     getServerCapabilities(): ServerCapabilities | undefined {
         return this.client.getServerCapabilities();
     }
 
     /**
-     * List tools with caching
-     * Returns cached tools if valid, otherwise fetches from upstream
+     * List tools from upstream
+     *
+     * Caching currently disabled (max: 0). Future versions will cache responses.
+     *
+     * @param params Request parameters
+     * @param options Request options
+     * @returns List of available tools
      */
-    //@cached((instance: Upstream) => instance.tools, () => "")
     async listTools(params?: ListToolsRequest["params"], options?: RequestOptions): Promise<ListToolsResult> {
         return await this.client.listTools(params, options);
     }
 
     /**
-     * Call a tool on the upstream
-     * Thin wrapper around client.callTool - session handles namespace extraction and metering
+     * Call a tool on upstream
+     *
+     * Thin wrapper around SDK client. Session handles namespace extraction and metering.
+     *
+     * @param params Tool call parameters
+     * @param resultSchema Result validation schema
+     * @param options Request options
+     * @returns Tool execution result
      */
     async callTool(
         params: CallToolRequest["params"],
@@ -282,17 +361,26 @@ export class Upstream extends EventEmitter {
     }
 
     /**
-     * List resources with caching
-     * Returns cached resources if valid, otherwise fetches from upstream
+     * List resources from upstream
+     *
+     * Caching currently disabled (max: 0). Future versions will cache responses.
+     *
+     * @param params Request parameters
+     * @param options Request options
+     * @returns List of available resources
      */
-    //@cached((instance: Upstream) => instance.resources, () => "")
     async listResources(params?: ListResourcesRequest["params"], options?: RequestOptions): Promise<{ resources: Resource[] }> {
         return await this.client.listResources(params, options);
     }
 
     /**
-     * Read a resource on the upstream
-     * Thin wrapper around client.readResource - session handles namespace extraction and metering
+     * Read a resource from upstream
+     *
+     * Thin wrapper around SDK client. Session handles namespace extraction and metering.
+     *
+     * @param params Resource read parameters
+     * @param options Request options
+     * @returns Resource contents
      */
     async readResource(
         params: ReadResourceRequest["params"],
@@ -303,17 +391,26 @@ export class Upstream extends EventEmitter {
 
 
     /**
-     * List prompts with caching
-     * Returns cached prompts if valid, otherwise fetches from upstream
+     * List prompts from upstream
+     *
+     * Caching currently disabled (max: 0). Future versions will cache responses.
+     *
+     * @param params Request parameters
+     * @param options Request options
+     * @returns List of available prompts
      */
-    //@cached((instance: Upstream) => instance.prompts, () => "")
     async listPrompts(params?: ListPromptsRequest["params"], options?: RequestOptions): Promise<ListPromptsResult> {
         return await this.client.listPrompts(params, options);
     }
 
     /**
-     * Read a resource on the upstream
-     * Thin wrapper around client.readResource - session handles namespace extraction and metering
+     * Get a prompt from upstream
+     *
+     * Thin wrapper around SDK client. Session handles namespace extraction and metering.
+     *
+     * @param params Prompt get parameters
+     * @param options Request options
+     * @returns Prompt details
      */
     async getPrompt(
         params: GetPromptRequest["params"],
@@ -323,16 +420,23 @@ export class Upstream extends EventEmitter {
     }
 
     /**
-     * List resourceTemplates with caching
-     * Returns cached resourceTemplates if valid, otherwise fetches from upstream
+     * List resource templates from upstream
+     *
+     * Caching currently disabled (max: 0). Future versions will cache responses.
+     *
+     * @param params Request parameters
+     * @param options Request options
+     * @returns List of available resource templates
      */
-    //@cached((instance: Upstream) => instance.resourceTemplates, () => "")
     async listResourceTemplates(params?: ListResourceTemplatesRequest["params"], options?: RequestOptions): Promise<ListResourceTemplatesResult> {
         return await this.client.listResourceTemplates(params, options);
     }
 
     /**
-     * Invalidate all caches (useful for debugging/admin operations)
+     * Invalidate all caches
+     *
+     * Clears all cached list responses. Used on dynamic list change notifications
+     * and during cleanup.
      */
     public invalidateAllCaches() {
         this.tools.invalidate();
@@ -365,6 +469,12 @@ export class Upstream extends EventEmitter {
         return this.client;
     }
 
+    /**
+     * Close upstream connection
+     *
+     * Clears retry timers, transport handlers, caches, and closes the client.
+     * Prevents reconnection attempts after shutdown.
+     */
     public async close() {
         // Clear retry timer if exists
         if (this.retryTimer) {
@@ -378,30 +488,43 @@ export class Upstream extends EventEmitter {
             this.transport.onerror = undefined;
         }
 
-        // Clear caches (helps with garbage collection)
         this.invalidateAllCaches();
-
-        // Emit shutdown event
         this.emit(UPSTREAM_EVENTS.SHUTDOWN);
-
-        // Close the client
         await this.client.close();
     }
 }
+
 /**
- * A pool for obtaining instances of stateless MCP"s
+ * UpstreamPool - Connection pooling for stateless MCPs
+ *
+ * Maintains singleton Upstream instances per namespace. Used for stateless MCPs
+ * where multiple sessions can share the same connection. Lazy-initializes and
+ * auto-connects upstreams on first access.
  */
 export class UpstreamPool {
 
     private managers: Map<string, Upstream> = new Map();
 
-
-    public getOrCreate(config: UpstreamConfig): Upstream {
+    /**
+     * Get or create upstream instance
+     *
+     * Returns existing upstream for namespace or creates new one. Auto-connects
+     * on creation.
+     *
+     * @param config Upstream configuration
+     * @returns Upstream instance for this namespace
+     */
+    public getOrCreate(config: MCPConfig): Upstream {
         let m = this.managers.get(config.namespace);
         if (!m) {
             m = new Upstream(config);
             this.managers.set(config.namespace, m);
-            m.connect().catch(() => { }); // fire-and-forget initial connect
+            m.connect().catch((e) => {
+                const msg = e instanceof Error ? e.message : String(e);
+                logger.error({
+                    msg
+                }, "unexpected error");
+            });
         }
         return m;
     }

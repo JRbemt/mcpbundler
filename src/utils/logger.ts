@@ -1,3 +1,14 @@
+/**
+ * Logger - Structured logging with automatic caller detection
+ *
+ * Pino-based logger with custom caller information automatically injected into
+ * every log entry. Detects calling file, function, and line number via stack
+ * trace analysis. Supports PM2 mode (plain JSON) and dev mode (colorized).
+ *
+ * Log format: [file:function:line] message. Filters internal files and node_modules
+ * from caller detection to surface actual application code.
+ */
+
 /// @vitest-ignore
 import pino from 'pino';
 import { fileURLToPath } from 'url';
@@ -93,7 +104,7 @@ const transport = pino.transport({
         colorize: !isRunningUnderPM2,
         translateTime: 'SYS:HH:MM:ss',
         ignore: 'pid,hostname,caller',
-        messageFormat: '[{caller}] {msg}',
+        messageFormat: '\x1b[33m[{caller}]\x1b[0m \x1b[36m{msg}\x1b[0m',
     },
     level: 'info'
 });

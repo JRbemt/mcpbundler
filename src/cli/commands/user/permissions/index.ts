@@ -12,37 +12,38 @@ export function createPermissionsCommand(): Command {
     .showSuggestionAfterError();
 
   permissions
-    .command("add <username> <permission>")
-    .description("Add one of your permissions to a created user")
-    .option("--propagate", "Cascade permission to all descendants")
-    .action((username, permission, options, command) => {
+    .command("add <user-id> <permissions...>")
+    .description("add one of your permissions to a created user (requires valid token)")
+    .option("--propagate", "cascade permission to all descendants")
+    .action((userId, permission, options, command) => {
       const globalOpts = command.parent.parent.parent.opts();
-      addCommand(username, permission, { ...options, ...globalOpts });
+      addCommand(userId, permission, { ...options, ...globalOpts });
     });
 
   permissions
     .command("list")
-    .description("List all available permission types (public endpoint)")
+    .description("list all available permission types (no token required)")
     .action((options, command) => {
       const globalOpts = command.parent.parent.parent.opts();
       listCommand({ ...options, ...globalOpts });
     });
 
   permissions
-    .command("remove <username> <permission>")
-    .description("Remove one of your permissions from a created user (cascades to descendants)")
-    .action((username, permission, options, command) => {
+    .command("remove <user-id> <permissions...>")
+    .description("remove one of your permissions from a created user (cascades to descendants) (requires valid token)")
+    .action((userId, permission, options, command) => {
       const globalOpts = command.parent.parent.parent.opts();
-      removeCommand(username, permission, { ...options, ...globalOpts });
+      removeCommand(userId, permission, { ...options, ...globalOpts });
     });
 
   permissions
-    .command("show [username]")
-    .description("Show user permissions (requires valid token, VIEW_PERMISSIONS for others)")
-    .action((username, options, command) => {
+    .command("show <user-id>")
+    .description("show user permissions (requires valid token, VIEW_PERMISSIONS for others)")
+    .action((userId, options, command) => {
       const globalOpts = command.parent.parent.parent.opts();
-      showCommand(username, { ...options, ...globalOpts });
+      showCommand(userId, { ...options, ...globalOpts });
     });
+
 
   permissions.addHelpText("after", HELP_FOOTER);
 

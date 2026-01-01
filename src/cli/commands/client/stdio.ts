@@ -24,10 +24,10 @@ import logger from "../../../utils/logger.js";
 interface ClientConnectOptions {
   name: string;
   host: string;
-  collection?: string;
+  bundleToken?: string;
 }
 
-export async function clientConnectCommand(options: ClientConnectOptions): Promise<void> {
+export async function toStdioCommand(options: ClientConnectOptions): Promise<void> {
   try {
     // Validate URL
     let bundlerUrl: URL;
@@ -41,7 +41,7 @@ export async function clientConnectCommand(options: ClientConnectOptions): Promi
     // Create and start bridge
     const bridge = new StdioToSseBridge({
       bundlerUrl: bundlerUrl.origin,
-      token: options.collection,
+      token: options.bundleToken,
       serverInfo: { name: options.name, version: "1.0.0" }
     });
 

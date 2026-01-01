@@ -1,57 +1,54 @@
 import axios, { AxiosInstance } from "axios";
+import type {
+  CreateBundleRequest,
+  CreateBundleResponse,
+  GenerateTokenRequest,
+  GenerateTokenResponse,
+  AddMcpsByNamespaceRequest,
+  AddMcpByNamespaceResponse,
+  BundleResponse,
+} from "../../api/routes/bundles.js";
+import type {
+  BindCredentialRequest as ApiBindCredentialRequest,
+  CredentialResponse,
+  CredentialListItem,
+} from "../../api/routes/credentials.js";
+import type {
+  CreateMcpRequest,
+  McpResponse,
+} from "../../api/routes/mcps.js";
+import type {
+  UserResponse,
+  CreateUserResponse,
+  UserResponseWithCreatedUsers,
+  DeleteUserResponse,
+  DeleteAllUsersResponse,
+} from "../../api/routes/users.js";
+import type {
+  PermissionListResponse,
+  UserPermissionsResponse,
+  ChangePermissionResponse,
+} from "../../api/routes/permissions.js";
+import type { MCPAuthConfig } from "../../core/config/schemas.js";
 
-export interface UpstreamConfig {
-  namespace: string;
-  url: string;
-  version?: string;
-  stateless?: boolean;
-  auth?: {
-    method: string;
-    [key: string]: any;
-  };
-}
+// Re-exported types from API routes
+export type Mcp = McpResponse;
+export type ApiUser = UserResponse;
+export type ApiUserWithCreatedUsers = UserResponseWithCreatedUsers;
+export type Token = GenerateTokenResponse;
+export type PermissionTypes = PermissionListResponse;
 
-export interface Collection {
-  id: string;
-  name: string;
-  mcps: UpstreamConfig[];
-  created_at: string;
-}
+// MCP (used in CLI commands)
+// Re-export bundle API types for CLI use
+export { CreateBundleRequest, CreateBundleResponse, GenerateTokenRequest, GenerateTokenResponse };
+export type AddMcpRequest = AddMcpsByNamespaceRequest;
+export type AddMcpResponse = AddMcpByNamespaceResponse;
+export { AddMcpsByNamespaceRequest };
 
-export interface Mcp {
-  id: string;
-  namespace: string;
-  url: string;
-  author: string;
-  description: string;
-  version: string;
-  stateless: boolean;
-  token_cost: number;
-  auth_strategy?: "MASTER" | "TOKEN_SPECIFIC" | "NONE";
-  master_auth_config?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ApiUser {
-  id: string;
-  name: string;
-  contact: string;
-  department?: string;
-  is_admin: boolean;
-  permissions: string[];
-  created_at: string;
-  last_used_at?: string;
-  revoked_at?: string;
-  api_key?: string;
-  created_by?: string;
-  created_users?: ApiUser[];
-}
-
-export interface PermissionTypes {
-  permissions: string[];
-  descriptions: Record<string, string>;
-}
+// Re-export credential API types for CLI use
+export type Credential = CredentialListItem;
+export type BindCredentialRequest = ApiBindCredentialRequest;
+export { CredentialResponse };
 
 export class BundlerAPIClient {
   private client: AxiosInstance;
@@ -98,64 +95,89 @@ export class BundlerAPIClient {
   }
 
   /**
-   * List all collections
+   * List all bundles
    */
-  async listCollections(): Promise<Collection[]> {
-    const response = await this.client.get("/api/collections");
+  async listBundles(): Promise<BundleResponse[]> {
+    const response = await this.client.get("/api/bundles");
     return response.data;
   }
 
   /**
-   * Get a specific collection
+   * List bundles created by the authenticated user
    */
-  async getCollection(collectionId: string): Promise<Collection> {
-    const response = await this.client.get(`/api/collections/${collectionId}`);
+  async listMyBundles(): Promise<BundleResponse[]> {
+    const response = await this.client.get("/api/bundles/me");
     return response.data;
   }
 
   /**
-   * Create a new collection
+   * Get a specific bundle
    */
-  async createCollection(name: string): Promise<Collection> {
-    const response = await this.client.post("/api/collections", { name });
+  async getBundle(bundleId: string): Promise<BundleResponse> {
+    const response = await this.client.get(`/api/bundles/${bundleId}`);
     return response.data;
   }
 
   /**
-   * Delete a collection by ID
+   * Create a new bundle
    */
-  async deleteCollection(collectionId: string): Promise<void> {
-    await this.client.delete(`/api/collections/${collectionId}`);
-  }
-
-  /**
-   * Add MCP to a collection
-   */
-  async addMcpToCollection(collectionId: string, config: UpstreamConfig): Promise<void> {
-    await this.client.post(`/api/collections/${collectionId}/mcps`, config);
-  }
-
-  /**
-   * Delete MCP from a collection
-   */
-  async deleteMcpFromCollection(collectionId: string, namespace: string): Promise<void> {
-    await this.client.delete(`/api/collections/${collectionId}/mcps/${namespace}`);
-  }
-
-  /**
-   * List MCPs in a collection
-   */
-  async listCollectionMcps(collectionId: string): Promise<UpstreamConfig[]> {
-    const response = await this.client.get(`/api/collections/${collectionId}/mcps`);
+  async createBundle(name: string, description: string): Promise<BundleResponse> {
+    const response = await this.client.post("/api/bundles", { name, description });
     return response.data;
   }
 
   /**
-   * Generate access token for a collection
+   * Delete a bundle by ID
    */
-  async generateToken(collectionId: string): Promise<{ token: string }> {
-    const response = await this.client.post(`/api/collections/${collectionId}/tokens`);
+  async deleteBundle(bundleId: string): Promise<void> {
+    await this.client.delete(`/api/bundles/${bundleId}`);
+  }
+
+  /**
+   * Add MCP(s) to a bundle by namespace
+   */
+  async addMcpToBundle(bundleId: string, mcpRequests: AddMcpRequest): Promise<AddMcpResponse> {
+    const response = await this.client.post(`/api/bundles/${bundleId}`, mcpRequests);
     return response.data;
+  }
+
+  /**
+   * Delete MCP from a bundle
+   */
+  async deleteMcpFromBundle(bundleId: string, namespace: string): Promise<void> {
+    await this.client.delete(`/api/bundles/${bundleId}/${namespace}`);
+  }
+
+  /**
+   * Generate access token for a bundle
+   */
+  async generateToken(
+    bundleId: string,
+    name: string,
+    description?: string,
+    expiresAt?: string
+  ): Promise<GenerateTokenResponse> {
+    const response = await this.client.post(`/api/bundles/${bundleId}/tokens`, {
+      name,
+      description,
+      expiresAt,
+    });
+    return response.data;
+  }
+
+  /**
+   * List all tokens for a bundle
+   */
+  async listBundleTokens(bundleId: string): Promise<Token[]> {
+    const response = await this.client.get(`/api/bundles/${bundleId}/tokens`);
+    return response.data;
+  }
+
+  /**
+   * Revoke/delete a bundle token
+   */
+  async revokeBundleToken(bundleId: string, tokenId: string): Promise<void> {
+    await this.client.delete(`/api/bundles/${bundleId}/tokens/${tokenId}`);
   }
 
   /**
@@ -167,39 +189,31 @@ export class BundlerAPIClient {
   }
 
   /**
-   * Get MCP by namespace
-   */
-  async getMcpByNamespace(namespace: string): Promise<Mcp> {
-    const response = await this.client.get(`/api/mcps/namespace/${namespace}`);
-    return response.data;
-  }
-
-  /**
    * Create a master MCP
    */
-  async createMcp(config: UpstreamConfig): Promise<Mcp> {
+  async createMcp(config: CreateMcpRequest): Promise<McpResponse> {
     const response = await this.client.post("/api/mcps", config);
     return response.data;
   }
 
   /**
-   * Get a specific MCP by ID
+   * Get MCP by namespace
    */
-  async getMcp(mcpId: string): Promise<Mcp> {
-    const response = await this.client.get(`/api/mcps/${mcpId}`);
+  async getMcpByNamespace(namespace: string): Promise<Mcp> {
+    const response = await this.client.get(`/api/mcps/${namespace}`);
     return response.data;
   }
 
   /**
-   * Update a master MCP
+   * Update MCP by namespace
    */
-  async updateMcp(mcpId: string, config: Partial<UpstreamConfig>): Promise<Mcp> {
-    const response = await this.client.put(`/api/mcps/${mcpId}`, config);
+  async updateMcp(namespace: string, config: Partial<McpResponse>): Promise<Mcp> {
+    const response = await this.client.put(`/api/mcps/${namespace}`, config);
     return response.data;
   }
 
   /**
-   * Delete a master MCP
+   * Delete MCP by namespace
    */
   async deleteMcp(namespace: string): Promise<void> {
     await this.client.delete(`/api/mcps/${namespace}`);
@@ -220,7 +234,7 @@ export class BundlerAPIClient {
     name: string;
     contact: string;
     department?: string;
-  }): Promise<ApiUser> {
+  }): Promise<CreateUserResponse> {
     const response = await this.client.post("/api/users/self", data);
     return response.data;
   }
@@ -234,7 +248,7 @@ export class BundlerAPIClient {
     department?: string;
     permissions?: string[];
     isAdmin?: boolean;
-  }): Promise<ApiUser> {
+  }): Promise<CreateUserResponse> {
     const response = await this.client.post("/api/users", data);
     return response.data;
   }
@@ -242,7 +256,7 @@ export class BundlerAPIClient {
   /**
    * Get own user profile
    */
-  async getOwnProfile(): Promise<ApiUser> {
+  async getOwnProfile(): Promise<UserResponseWithCreatedUsers> {
     const response = await this.client.get("/api/users/me");
     return response.data;
   }
@@ -262,7 +276,7 @@ export class BundlerAPIClient {
   /**
    * Revoke own API key
    */
-  async revokeOwnKey(): Promise<{ message: string; revoked_at: string }> {
+  async revokeOwnKey(): Promise<DeleteUserResponse> {
     const response = await this.client.post("/api/users/me/revoke");
     return response.data;
   }
@@ -270,26 +284,16 @@ export class BundlerAPIClient {
   /**
    * Revoke a user created by the current user (cascades to all descendants)
    */
-  async revokeCreatedUser(userId: string): Promise<{
-    message: string;
-    revoked_user_id: string;
-    total_revoked: number;
-    revoked_user_ids: string[];
-  }> {
-    const response = await this.client.post(`/api/users/me/created/${userId}/revoke`);
+  async revokeCreatedUser(userId: string): Promise<DeleteAllUsersResponse> {
+    const response = await this.client.post(`/api/users/${userId}/revoke`);
     return response.data;
   }
 
   /**
    * Revoke ALL users created by the current user (cascades to all descendants)
    */
-  async revokeAllCreatedUsers(): Promise<{
-    message: string;
-    direct_users_revoked: number;
-    total_revoked: number;
-    revoked_user_ids: string[];
-  }> {
-    const response = await this.client.post("/api/users/me/created/revoke-all");
+  async revokeAllCreatedUsers(): Promise<DeleteAllUsersResponse> {
+    const response = await this.client.post("/api/users/me/revoke-all");
     return response.data;
   }
 
@@ -314,7 +318,7 @@ export class BundlerAPIClient {
   /**
    * Revoke user by name (admin only)
    */
-  async revokeUserByName(name: string): Promise<{ message: string; user: any }> {
+  async revokeUserByName(name: string): Promise<DeleteUserResponse> {
     const response = await this.client.post(`/api/users/by-name/${name}/revoke`);
     return response.data;
   }
@@ -322,57 +326,38 @@ export class BundlerAPIClient {
   /**
    * Get own permissions
    */
-  async getOwnPermissions(): Promise<{
-    user_id: string;
-    user_name: string;
-    is_admin: boolean;
-    permissions: string[];
-  }> {
+  async getOwnPermissions(): Promise<UserPermissionsResponse> {
     const response = await this.client.get("/api/permissions/me");
     return response.data;
   }
 
   /**
-   * Get permissions for a specific user by name (admin only)
+   * Get permissions for a specific user by ID
    */
-  async getUserPermissions(username: string): Promise<{
-    user_id: string;
-    user_name: string;
-    is_admin: boolean;
-    permissions: Array<{ id: string; permission: string }>;
-  }> {
-    const response = await this.client.get(`/api/permissions/by-name/${username}`);
+  async getUserPermissions(userId: string): Promise<UserPermissionsResponse> {
+    const response = await this.client.get(`/api/permissions/by-id/${userId}`);
     return response.data;
   }
 
   /**
    * Add permission to user
    */
-  async addPermission(username: string, permission: string, propagate?: boolean): Promise<{
-    message: string;
-    user: any;
-    permission: string;
-    affected_users: number;
-  }> {
-    const response = await this.client.post(`/api/permissions/by-name/${username}`, {
-      permission,
+  async addPermission(userId: string, permissions: string[], propagate?: boolean): Promise<ChangePermissionResponse> {
+    const response = await this.client.post(`/api/permissions/by-id/${userId}/add`, {
+      permissions: permissions,
       propagate: propagate || false,
     });
     return response.data;
   }
 
   /**
-   * Remove permission from user (cascades to all descendants)
+   * Remove permissions from user (cascades to all descendants)
    * Non-admins can only revoke permissions they have from users they created
    */
-  async removePermission(username: string, permission: string): Promise<{
-    message: string;
-    user: any;
-    permission: string;
-    affected_users: number;
-  }> {
-    const response = await this.client.delete(
-      `/api/permissions/by-name/${username}/${permission}`
+  async removePermission(userId: string, permissions: string[]): Promise<ChangePermissionResponse> {
+    const response = await this.client.post(
+      `/api/permissions/by-id/${userId}/remove`,
+      { permissions }
     );
     return response.data;
   }
@@ -382,6 +367,41 @@ export class BundlerAPIClient {
    */
   async listPermissions(): Promise<PermissionTypes> {
     const response = await this.client.get("/api/permissions");
+    return response.data;
+  }
+
+  /**
+   * Bind credentials for a bundle token + MCP namespace
+   */
+  async bindCredential(bundleToken: string, namespace: string, authConfig: MCPAuthConfig): Promise<CredentialResponse> {
+    const response = await this.client.post(`/api/tokens/${bundleToken}/mcps/${namespace}`, {
+      authConfig,
+    });
+    return response.data;
+  }
+
+  /**
+   * Update credentials for a bundle token + MCP namespace
+   */
+  async updateCredential(bundleToken: string, namespace: string, authConfig: MCPAuthConfig): Promise<CredentialResponse> {
+    const response = await this.client.put(`/api/tokens/${bundleToken}/mcps/${namespace}`, {
+      authConfig,
+    });
+    return response.data;
+  }
+
+  /**
+   * Remove credentials for a bundle token + MCP namespace
+   */
+  async removeCredential(bundleToken: string, namespace: string): Promise<void> {
+    await this.client.delete(`/api/tokens/${bundleToken}/mcps/${namespace}`);
+  }
+
+  /**
+   * List all credentials for a bundle token
+   */
+  async listCredentials(bundleToken: string): Promise<Credential[]> {
+    const response = await this.client.get(`/api/tokens/${bundleToken}/mcps`);
     return response.data;
   }
 }

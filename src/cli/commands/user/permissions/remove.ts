@@ -6,23 +6,23 @@ interface RemoveOptions {
   host: string;
 }
 
-export async function removeCommand(username: string, permission: string, options: RemoveOptions): Promise<void> {
+export async function removeCommand(userId: string, permission: string[], options: RemoveOptions): Promise<void> {
   try {
     const client = new BundlerAPIClient(options.host, options.token);
-    const result = await client.removePermission(username, permission);
+    const result = await client.removePermission(userId, permission);
 
     banner("Permission Removed", { bg: BG_COLORS.RED });
     console.group()
     const tableData = [{
-      User: result.user.name,
-      Permission: result.permission,
-      "Affected Users": result.affected_users,
+      User: result.name,
+      Permission: result.permissions,
+      "Affected Users": result.affectedUsers,
     }];
 
     console.table(tableData);
 
-    if (result.affected_users > 1) {
-      console.log(`Permission cascaded and removed from ${result.affected_users} user(s) (including descendants)`);
+    if (result.affectedUsers > 1) {
+      console.log(`Permission cascaded and removed from ${result.affectedUsers} user(s) (including descendants)`);
     }
     console.groupEnd()
     console.log()

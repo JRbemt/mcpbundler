@@ -20,25 +20,28 @@ export async function createCommand(options: CreateOptions): Promise<void> {
         name: options.name,
         contact: options.contact,
         department: options.department,
-        permissions: options.permissions || [],
+        permissions: options.permissions,
         isAdmin: options.admin || false,
       });
 
-      banner("User Created Successfully", { bg: BG_COLORS.GREEN });
+      banner(" User Created Successfully ", { bg: BG_COLORS.GREEN });
 
+      console.group()
       const tableData = [{
         Name: result.name,
         Contact: result.contact,
         Department: result.department || "N/A",
-        Admin: result.is_admin,
-        Permissions: result.permissions.join(", ") || "None",
-        Created: new Date(result.created_at).toLocaleString(),
+        Admin: result.isAdmin,
+        Permissions: result.permissions?.join(", ") || "None",
+        Created: new Date(result.createdAt).toLocaleString(),
       }];
 
       console.table(tableData);
-
-      console.log(`\nAPI Key: ${result.api_key}`);
-      console.log("\n⚠️  IMPORTANT: Save this API key securely - it will not be shown again!");
+      console.log();
+      console.log(`API Key: ${result.apiKey}`);
+      console.log("IMPORTANT: Save this API key securely - it will not be shown again!");
+      console.groupEnd();
+      console.log();
     } else {
       const result = await client.createUserSelfService({
         name: options.name,
@@ -52,14 +55,14 @@ export async function createCommand(options: CreateOptions): Promise<void> {
         Name: result.name,
         Contact: result.contact,
         Department: result.department || "N/A",
-        Permissions: result.permissions.join(", ") || "None",
-        Created: new Date(result.created_at).toLocaleString(),
+        Permissions: result.permissions?.join(", ") || "None",
+        Created: new Date(result.createdAt).toLocaleString(),
       }];
 
       console.table(tableData);
 
-      console.log(`\nAPI Key: ${result.api_key}`);
-      console.log("\n⚠️  IMPORTANT: Save this API key securely - it will not be shown again!");
+      console.log(`API Key: ${result.apiKey}`);
+      console.log("  IMPORTANT: Save this API key securely - it will not be shown again!");
     }
   } catch (error: any) {
     console.error(`Error creating user: ${error.response?.data?.error || error.message}`);

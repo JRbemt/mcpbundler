@@ -16,11 +16,11 @@ export async function meCommand(options: MeOptions): Promise<void> {
     console.log(`- Name: ${profile.name}`);
     console.log(`- Contact: ${profile.contact}`);
     console.log(`- Department: ${profile.department || "N/A"}`);
-    console.log(`- Admin: ${profile.is_admin}`);
+    console.log(`- Admin: ${profile.isAdmin}`);
     console.log(`- Permissions: ${profile.permissions.join(", ") || "None"}`);
-    console.log(`- Created: ${new Date(profile.created_at).toLocaleString()}`);
-    if (profile.last_used_at) {
-      console.log(`- Last Used: ${new Date(profile.last_used_at).toLocaleString()}`);
+    console.log(`- Created: ${new Date(profile.createdAt).toLocaleString()}`);
+    if (profile.lastUsedAt) {
+      console.log(`- Last Used: ${new Date(profile.lastUsedAt).toLocaleString()}`);
     }
     console.groupEnd()
 
@@ -28,18 +28,18 @@ export async function meCommand(options: MeOptions): Promise<void> {
     banner(" Users Created ", { bg: BG_COLORS.GREEN });
     console.group()
     // Display created users if any
-    if (profile.created_users && profile.created_users.length > 0) {
+    if (profile.createdUsers && profile.createdUsers.length > 0) {
 
-      const tableData = profile.created_users.map(user => ({
+      const tableData = profile.createdUsers.map(user => ({
         ID: user.id,
         Name: user.name,
         Contact: user.contact,
         Department: user.department || "N/A",
-        Admin: user.is_admin,
+        Admin: user.isAdmin,
         Permissions: user.permissions.join(", ") || "None",
-        Created: new Date(user.created_at).toLocaleString(),
-        "Last Used": user.last_used_at ? new Date(user.last_used_at).toLocaleString() : "Never",
-        Revoked: user.revoked_at ? "Yes" : "No",
+        Created: new Date(user.createdAt).toLocaleString(),
+        "Last Used": user.lastUsedAt ? new Date(user.lastUsedAt).toLocaleString() : "Never",
+        Revoked: user.revokedAt ? "Yes" : "No",
       }));
 
       console.table(tableData);

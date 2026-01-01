@@ -4,12 +4,11 @@ import { Command } from "commander";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { createDaemonCommand as createDaemonCommand } from "./commands/daemon/index.js";
 import { createMcpsCommand } from "./commands/mcp/index.js";
-import { createClientCommand } from "./commands/client/index.js";
-import { createCollectionsCommand } from "./commands/collections/index.js";
-import { createUserCommand } from "./commands/user/index.js";
+import { createBundlesCommand } from "./commands/bundle/index.js";
 import { HELP_FOOTER } from "./utils/print-utils.js";
+import { toStdioCommand } from "./commands/client/stdio.js";
+import { createUserCommand } from "./commands/user/index.js";
 
 // Load package.json metadata
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,18 +26,23 @@ program
   .name("mcpbundler")
   .description(pckg.description)
   .version(pckg.version)
-  .option("-h, --host [host]", "server adress of the API", "http://0.0.0.0:3000")
+  .option("-h, --host [host]", "server adress of the mcpbundler API", "http://0.0.0.0:3000")
   .option("-t, --token [token]", "user token for API authentication (mcpb_*)")
   .showHelpAfterError()
   .showSuggestionAfterError();
 
 // Add command groups
-
-program.addCommand(createDaemonCommand());
 program.addCommand(createMcpsCommand());
-program.addCommand(createCollectionsCommand());
-program.addCommand(createClientCommand());
-program.addCommand(createUserCommand())
+program.addCommand(createBundlesCommand());
+program.addCommand(createUserCommand());
+program.command("stdio")
+  .description("connect to bundler and expose as an STDIO Server for local integrations")
+  .option("-b, --bundle <token>", "Bundle-token (default: '')", "")
+  .option("--name <name>", "Server name (default: 'mcpbundler-client')", "mcpbundler-client")
+
+  .action((options, cmd) => {
+    toStdioCommand(cmd.optsWithGlobals());
+  });
 
 program.addHelpText("after", HELP_FOOTER)
 

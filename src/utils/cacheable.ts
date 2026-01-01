@@ -1,6 +1,16 @@
+/**
+ * Cacheable - LRU caching utilities and method decorators
+ *
+ * Provides generic LRU cache manager with size-based eviction and TTL support.
+ * Includes @cached decorator for transparent method-level caching with custom
+ * key generation and conditional caching logic.
+ *
+ * Default limits: 1000 entries, 50MB total size, 5 minute TTL. Size calculated
+ * via JSON.stringify for automatic memory management.
+ */
+
 import logger from "./logger.js";
 import { LRUCache } from "lru-cache";
-// Configuration interface for CacheManager
 
 /**
  * Generic cache manager for different data types with LRU eviction

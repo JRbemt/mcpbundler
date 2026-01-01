@@ -1,17 +1,14 @@
 import { BundlerAPIClient, Mcp } from "../../utils/api-client.js";
-import { UpstreamAuthConfig } from "../../../core/config/schemas.js";
+import { MCPAuthConfig } from "../../../core/config/schemas.js";
 import { banner, BG_COLORS } from "../../utils/print-utils.js";
 import logger from "../../../utils/logger.js";
 import { canFetchMcp, fetchMcpCapabilities } from "./capabilities/fetch.js";
 
 interface AddManualOptions {
-  url: string;
-  namespace: string;
   stateless: boolean;
-  author: string;
   mcpVersion: string;
   description: string;
-  authType?: "MASTER" | "TOKEN_SPECIFIC" | "NONE";
+  authType?: "MASTER" | "USER_SET" | "NONE";
   authBearer?: string;
   authBasic?: string;
   authApikey?: string;
@@ -22,10 +19,10 @@ interface AddManualOptions {
 /**
  * Add an MCP manually via URL and metadata
  */
-export async function addMcpCommand(options: AddManualOptions): Promise<void> {
+export async function addMcpCommand(namespace: string, url: string, options: AddManualOptions): Promise<void> {
   try {
     // Parse auth configuration
-    let authConfig: UpstreamAuthConfig | undefined;
+    let authConfig: MCPAuthConfig | undefined;
     const authOptionsCount = [
       options.authBearer,
       options.authBasic,
@@ -60,10 +57,9 @@ export async function addMcpCommand(options: AddManualOptions): Promise<void> {
         header: "X-API-Key",
       };
     }
-    const namespace = options.namespace;
 
     // Determine auth strategy
-    let authStrategy: "MASTER" | "TOKEN_SPECIFIC" | "NONE" = "NONE";
+    let authStrategy: "MASTER" | "USER_SET" | "NONE" = "NONE";
     if (options.authType) {
       authStrategy = options.authType;
     } else if (authConfig) {
@@ -76,50 +72,49 @@ export async function addMcpCommand(options: AddManualOptions): Promise<void> {
     }
 
     // Build upstream config
-    const upstreamConfig: any = {
+    const data = {
       namespace,
-      url: options.url,
-      author: options.author,
+      url,
+      authStrategy,
       description: options.description,
       version: options.mcpVersion,
-      stateless: options.stateless ?? false,
-      authStrategy,
-      masterAuthConfig: authConfig ? JSON.stringify(authConfig) : undefined,
+      stateless: options.stateless,
+      masterAuth: authConfig,
     };
 
     const client = new BundlerAPIClient(options.host, options.token);
-    const mcp = await client.createMcp(upstreamConfig);
+    const mcp = await client.createMcp(data);
 
     banner(" MCP Server Added ", { bg: BG_COLORS.GREEN });
     console.group()
     const tableData = [{
       Namespace: mcp.namespace,
       URL: mcp.url,
-      Author: mcp.author,
+      Creator: mcp.createdBy?.name,
       Version: mcp.version,
       Stateless: mcp.stateless ? "Yes" : "No",
-      "Auth Strategy": mcp.auth_strategy || "NONE",
+      "Auth Strategy": mcp.authStrategy || "NONE",
       "Master Auth": authConfig ? authConfig.method : "None",
     }];
 
     console.table(tableData);
 
-    console.log(`\nDescription: ${mcp.description}`);
+    console.log(`Description: ${mcp.description}`);
     console.groupEnd()
     console.log()
 
-    const can_fetch_capbailities = canFetchMcp(mcp)
+    const can_fetch_capbailities = canFetchMcp(mcp, authConfig)
 
     // Display overview
     if (can_fetch_capbailities.canQuery) {
-      const capabilities = await fetchMcpCapabilities(mcp);
+      const capabilities = await fetchMcpCapabilities(mcp, authConfig);
 
 
       if (capabilities) {
         banner(" MCP Capabilities ", { bg: BG_COLORS.GREEN });
         // Display tools table
         if (capabilities.tools.length > 0) {
-          console.log(`   Tools (${capabilities.tools.length}):`);
+          console.log(`Tools (${capabilities.tools.length}):`);
           const toolsToShow = capabilities.tools.slice(0, 10);
 
           // Helper function to wrap text at specified width
@@ -183,14 +178,14 @@ export async function addMcpCommand(options: AddManualOptions): Promise<void> {
           console.log(`   └─${"─".repeat(nameColWidth)}─┴─${"─".repeat(descColWidth)}─┘`);
           console.groupEnd();
         } else {
-          console.log("   Tools: 0");
+          console.log("Tools: 0");
         }
 
         // Display resource and prompt counts only
-        console.log(`   Resources: ${capabilities.resources.length}`);
-        console.log(`   Prompts: ${capabilities.prompts.length}`);
+        console.log(`Resources: ${capabilities.resources.length}`);
+        console.log(`Prompts: ${capabilities.prompts.length}`);
       } else {
-        banner(" Failed to fetch capabilities", { bg: BG_COLORS.YELLOW });
+        banner(" Failed to fetch capabilities ", { bg: BG_COLORS.YELLOW });
         console.log("   " + can_fetch_capbailities.reason);
       }
     } else {
@@ -198,21 +193,11 @@ export async function addMcpCommand(options: AddManualOptions): Promise<void> {
       console.log("   " + can_fetch_capbailities.reason);
     }
     console.log();
+
+    process.exit(0);
   } catch (error: any) {
-    console.error(`Failed to add MCP: ${error.response?.data?.error || error.message}`);
-
-    if (error.response?.data?.details) {
-      logger.error("\nValidation errors:");
-      if (Array.isArray(error.response.data.details)) {
-        error.response.data.details.forEach((detail: any) => {
-          const field = detail.path?.join(".") || "unknown";
-          console.error(`  - ${field}: ${detail.message}`);
-        });
-      } else {
-        console.error(`  ${JSON.stringify(error.response.data.details, null, 2)}`);
-      }
-    }
-
+    const errorMessage = error.response?.data?.error || error.message;
+    console.error(`Failed to add MCP: ${errorMessage}`);
     process.exit(1);
   }
 }

@@ -1,3 +1,18 @@
+/**
+ * Bundler - Main MCP multiplexing server
+ *
+ * Acts as a proxy and multiplexer for multiple upstream MCP servers, presenting them
+ * as a unified interface to clients. Handles session management, request routing,
+ * permission enforcement, and namespace collision resolution.
+ *
+ * Key responsibilities:
+ * - Accept client connections via SSE with token-based authentication
+ * - Route MCP requests to appropriate upstream servers
+ * - Aggregate responses from multiple upstreams
+ * - Enforce per-MCP permissions and handle namespace collisions
+ * - Monitor session activity and implement idle timeouts
+ */
+
 // Polyfill EventSource for Node so the SDK client can connect to downstream SSE.
 import { EventSource } from "eventsource"
 globalThis.EventSource = EventSource;
@@ -17,15 +32,13 @@ import {
 
 import logger from "../utils/logger.js";
 import { Session } from "./session.js";
-import { BundlerConfig, UpstreamConfig } from "./config/schemas.js";
+import { BundlerConfig, MCPConfig } from "./config/schemas.js";
 import { Upstream, UpstreamPool } from "./upstream.js";
-import { ResolverService } from "./collection-resolver.js";
+import { ResolverService } from "./bundle-resolver.js";
 import { createBundlerRoutes } from "./routes/bundler-routes.js";
 
 /**
  * MCP Bundler Server Class
- * 
- * Encapsulates all server state and logic in a clean class-based architecture.
  */
 export class BundlerServer {
   private serverStartTime: number;
@@ -34,18 +47,18 @@ export class BundlerServer {
   private config: BundlerConfig;
   private sessions: Record<string, Session>;
   private httpServer: any;
-  private collection_resolver: ResolverService;
+  private bundleResolver: ResolverService;
   private app: express.Application;
 
   constructor(
     config: BundlerConfig,
-    collection_resolver: ResolverService,
+    bundleResolver: ResolverService,
   ) {
     this.config = config;
     this.serverStartTime = Date.now();
     this.upstreamPool = new UpstreamPool();
     this.sessions = {};
-    this.collection_resolver = collection_resolver;
+    this.bundleResolver = bundleResolver;
 
     // Create and configure
     this.mcpServer = this.createMCPServer();
@@ -196,11 +209,15 @@ export class BundlerServer {
   /**
    * Attach upstreams to a session
    */
-  public attachUpstreams(session: Session, configs: UpstreamConfig[]): void {
+  public attachUpstreams(session: Session, configs: MCPConfig[]): void {
     for (const config of configs) {
-      const upstream: Upstream = config.stateless
-        ? this.upstreamPool.getOrCreate(config)
-        : new Upstream(config);
+      let upstream: Upstream;
+      if (config.stateless && (config.authStrategy in ["MASTER", "NONE"])) {
+        // TODO: validate that stateless upstreams can only use MASTER or NONE auth strategy
+        upstream = this.getUpstreamPool().getOrCreate(config);
+      } else {
+        upstream = new Upstream(config);
+      }
       session.attach(upstream);
     }
   }
@@ -216,7 +233,7 @@ export class BundlerServer {
       version: this.config.version,
       host: this.config.host,
       port: this.config.port,
-      maxSessions: this.config.concurrency.max_sessions,
+      maxSessions: this.config.concurrency.max_concurrent,
     }, "Starting MCP Bundler server");
 
     // Start HTTP server
@@ -287,8 +304,8 @@ export class BundlerServer {
     return this.sessions;
   }
 
-  getAuthClient(): ResolverService {
-    return this.collection_resolver;
+  getBundleResolver(): ResolverService {
+    return this.bundleResolver;
   }
 
   getUpstreamPool(): UpstreamPool {

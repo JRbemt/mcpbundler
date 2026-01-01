@@ -1,5 +1,17 @@
+/**
+ * Encryption - AES-256-GCM encryption for sensitive data
+ *
+ * Encrypts credentials and auth configs using AES-256-GCM with authenticated
+ * encryption. Requires ENCRYPTION_KEY environment variable (min 32 chars).
+ * Encrypted format: iv:authTag:ciphertext (hex-encoded).
+ *
+ * Also provides API key generation (mcpb_ prefix) and SHA-256 hashing for
+ * secure storage. All keys are validated on startup.
+ */
+
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
-import logger from './logger.js';
+import logger from '../../utils/logger.js';
+import { MCPAuthConfig } from '../config/schemas.js';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -141,30 +153,23 @@ export function isEncrypted(data: string): boolean {
 }
 
 /**
- * Encrypts an auth config object
- * Converts to JSON, then encrypts
+ * Encrypts a json object
  */
-export function encryptAuthConfig(authConfig: any): string {
-  if (!authConfig) {
-    return '';
-  }
-
-  const json = JSON.stringify(authConfig);
-  return encrypt(json);
+export function encryptJSON<T>(json: T): string {
+  const str = JSON.stringify(json);
+  return encrypt(str);
 }
 
 /**
- * Decrypts an auth config object
- * Decrypts, then parses JSON
+ * Decrypts and JSON parses a string
  */
-export function decryptAuthConfig(encryptedAuthConfig: string): any {
-  if (!encryptedAuthConfig) {
-    return null;
-  }
-
+export function decryptJSON<T>(encrypted: string): T {
   try {
-    const json = decrypt(encryptedAuthConfig);
-    return JSON.parse(json);
+    const json = decrypt(encrypted);
+    logger.debug({ decryptedString: json, decryptedType: typeof json }, "decrypt() returned");
+    const parsed = JSON.parse(json);
+    logger.debug({ parsedValue: parsed, parsedType: typeof parsed }, "JSON.parse() returned");
+    return parsed;
   } catch (error) {
     logger.error({ error }, 'Failed to decrypt auth config');
     throw new Error('Failed to decrypt authentication configuration');

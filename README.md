@@ -1,322 +1,209 @@
-# MCP Bundler
+<h1 align="center">
+  ♆    MCPbundler  ♆
+</h1>
+<p align="center">
+  Aggregate multiple MCP servers into one unified interface.
+</p>
 
-**Aggregate multiple MCP servers into one unified interface.**
 
-MCP Bundler is a multiplexer that consolidates multiple Model Context Protocol (MCP) servers into a single endpoint, making it easy to manage and access multiple MCP services from one central location.
+MCP Bundler is a multiplexer that consolidates multiple Model Context Protocol (MCP) servers into a single endpoint, making it easy to manage and access multiple MCP services from one central location. MCPbundler enables registering and sharing MCP's within an organization through bundles: 
 
-## 🚀 Features
+🧑‍💻 Bundles package a set of MCP's and support user authentication. 
+
+🤖 LLM agents connected to a bundle automatically discover added tools, no (re)configuration needed. 
+
+**What problem does this solve?** 
+
+MCP's have tremendous potential, but can not yet be managed, configured and deployed in a user-friendly way. 
+This project solves that for SSE MCP's.
+
+<p align="center">
+  <img src="./assets/infographic.png" alt="diagram" width="800">
+</p>
+
+
+## Tabel of Contents
+
+
+## Use Cases💡
+
+- **Development**: Manage multiple development MCPs from one endpoint
+- **Production**: Centralize MCP access with proper authorisation controls
+- **Teams**: Share bundles of MCPs across team members
+- **Multi-tenant**: Manage many MCPs with many users in an organization
+
+## Features 🚀
 
 - **Single Endpoint**: Access multiple MCP servers through one unified interface
 - **Dynamic Management**: Add and remove MCPs on the fly via CLI or API
+- **Connection Management**: MCP bundler supports both (long-lasting) statefull and stateless connections
 - **Namespacing**: Automatic namespacing prevents tool/resource conflicts
 - **Database-Backed**: Persistent storage with PostgreSQL, MySQL, or SQLite
-- **OAuth Support**: Built-in OAuth2 authentication for upstream MCPs
-- **Caching**: Intelligent LRU caching with TTL for improved performance
-- **Metering**: Track usage and costs across all MCPs
 - **CLI Interface**: Simple command-line tools for management
-- **REST API**: Full REST API for programmatic control
+- **REST API**: Functioning REST API for programmatic control
 
-## 📦 Installation
+**Roadmap:**
 
-```bash
-npm install -g mcpbundler
+- [ ] Full OAuth2 support
+- [ ] OpenAPI Docs
+- [ ] Web UI
+- [ ] Finer-grained permissions
+- [ ] Metrics dashboard for logs and metering
+
+
+# 1. Getting Started
+
+## 1.1 Installation 📦
+
+TODO
+
+## 1.2 Quick Start Guide
+
+### 1
+
+TODO: docker
+
+### 2 Local
+TODO
+
+# 2. CLI 📋
+
+<p align="center">
+  <img src="./assets/cli.png" alt="diagram" width="800">
+</p>
+
+To add an mcp:
 ```
-
-Or install locally:
-
-```bash
-git clone <repository-url>
-cd bundler
-npm install
-npm run build
-npm link
+mcpbundler --token <mcpb_*> mcp add ...
 ```
+To create a bundler
 
-### PM2 Log Rotation (Required for Daemon Mode)
 
-The bundler uses PM2 to run as a daemon. For automatic log rotation with compression, you need to install the pm2-logrotate module:
+# 3. Bundler
 
-```bash
-pm2 install pm2-logrotate
 ```
-
-This module provides:
-- Automatic log rotation when files reach 10MB
-- Retention of last 10 log files per type
-- Gzip compression of rotated logs
-- Configurable date-stamped file naming
-
-The bundler will automatically configure pm2-logrotate with optimal settings when you start the daemon.
-
-## 🏃 Quick Start
-
-### 1. Set up database
-
-Create a `.env` file:
-
-```env
-DATABASE_URL="postgresql://user:password@localhost:5432/mcpbundler"
-# Or use SQLite for development:
-# DATABASE_URL="file:./dev.db"
+[base]/sse
 ```
+For using the bundler, no user account is needed. Just a token generated for 
+bundle-token
 
-### 2. Run database migrations
+## 3.1 Wildcard
 
-```bash
-cd bundler
-npx prisma migrate dev
+
+
+# 4. Endpoints
+
+## 4.1 Users
+In order to interact with the API, you need an USER account for most endpoints.
+
+### 4.1.1 User Creation
+#### Self-service
+
+#### Hierarchical Issuance
 ```
-
-### 3. Start the bundler
-
-```bash
-mcpbundler start
+Endpoints:
+- POST /api/users/self                   - Self-service registration (no auth, if enabled)
+- POST /api/users                        - Create user (CREATE_USER permission)
+- GET  /api/users/me                     - Get own profile with created users
+- PUT  /api/users/me                     - Update own profile
+- POST /api/users/me/revoke              - Revoke own API key
+- POST /api/users/me/created/:id/revoke  - Revoke user you created (cascades)
+- POST /api/users/me/created/revoke-all  - Revoke all users you created
+- GET  /api/users                        - List all users (LIST_USERS permission)
+- GET  /api/users/by-name/:name          - Get user by name (admin only)
+- POST /api/users/by-name/:name/revoke   - Revoke user by name (admin only)
 ```
+### 4.1.2 Permissions
+Currently there are four scopes that can be assigned to an user account: 
+0: "CREATE_USER"        Create a user
+1: "ADD_MCP"            Add an MCP to the registry
+2: "LIST_USERS"         List all users incl. in the organisation
+3: "VIEW_PERMISSIONS"   View permissions
 
-This will start the daemon in the background on port 3000.
-
-### 4. Create a collection and add MCPs
-
-```bash
-# This will create a default collection if none exists
-mcpbundler add http://localhost:3001/sse --namespace files
-
-# Add more MCPs
-mcpbundler add http://localhost:3002/sse --namespace database
+An user creating another user can not assign permissions beyond those held by the creating (parent) user. The child user can only be assigned permissions that are equal to or more restrictive than those of the parent. 
 ```
-
-### 5. List your MCPs
-
-```bash
-mcpbundler list
+Endpoints:
+- GET    /api/permissions                            - List all permission types
+- GET    /api/permissions/me                         - Get own permissions
+- GET    /api/permissions/by-name/:name              - Get user permissions (VIEW_PERMISSIONS)
+- POST   /api/permissions/by-name/:name              - Add permission (optional cascade)
+- DELETE /api/permissions/by-name/:name/:permission  - Remove permission (cascades)
 ```
+## 4.2 MCP's
 
-### 6. Get an access token
-
-You'll need to use the REST API to generate a token:
-
-```bash
-# Get the collection ID from the list command
-curl -X POST http://localhost:3000/api/collections/{collection-id}/tokens \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my-app-token", "description": "Token for my MCP client"}'
 ```
-
-### 7. Connect to the bundler
-
-Use the access token in your MCP client:
-
-```json
-{
-  "mcpServers": {
-    "bundler": {
-      "name": "bundler",
-      "baseUrl": "http://localhost:3000/sse",
-      "headers": {
-        "Authorization": "Bearer YOUR_ACCESS_TOKEN"
-      }
-    }
-  }
-}
+Endpoints:
+- GET    /api/mcps                       - List all master MCPs
+- POST   /api/mcps                       - Add MCP (ADD_MCP permission)
+- GET    /api/mcps/:id                   - Get MCP by ID
+- PUT    /api/mcps/:id                   - Update MCP
+- DELETE /api/mcps/all                   - Bulk delete all user's MCPs
+- GET    /api/mcps/:namespace            - Get MCP by namespace
+- DELETE /api/mcps/:namespace            - Delete MCP
 ```
+url, author, description, 
 
-## 📋 CLI Commands
-
-### `mcpbundler start`
-
-Start the bundler daemon.
-
-```bash
-mcpbundler start [options]
+```bash 
+>> mcpbundler --token <mcpb_*> mcp add ...
+add an MCP server manually via URL and metadata (requires valid token, ADD_MCP permission)
 
 Options:
-  -p, --port <port>       Port to run on (default: 3000)
-  -d, --database <url>    Database connection URL
-  --no-daemon             Run in foreground instead of as daemon
+  -n, --namespace <namespace>  Namespace for the MCP
+  --url <url>                  URL of the MCP server
+  --author <author>            Author of the MCP server
+  --description <description>  Description of the MCP server
+  -v, --mcp-version [version]  Version of the MCP server (default: "1.0.0")
+  --stateless                  Mark as stateless (shared connection) (default: false)
+  --auth-type <type>           Which auth credentials are used by bundles accessing the MCP (choices: "MASTER", "NONE",
+                               "USER_SET", default: "NONE")
+  --auth-bearer [token]        Bearer token authentication (optional)
+  --auth-basic [user:pass]     Basic authentication username:password (optional)
+  --auth-apikey [key]          API key authentication (optional)
+  -h, --help                   display help for command
 ```
 
-### `mcpbundler stop`
+## 4.3 Bundles
+A bundle allows usage of a controlled subset of MCP's, a bundle can be configured to allow/deny certain tools/resources/prompts (supports regex).
 
-Stop the bundler daemon.
+The public endpoints require a xx bit bundle-token to access!!
 
-```bash
-mcpbundler stop
+```http
+Endpoints:
+- GET    /api/bundles                                   - List all bundles
+- GET    /api/bundles/me                                - List all your bundles
+- POST   /api/bundles                                   - Create bundle
+- DELETE /api/bundles/:id                               - Delete bundle (owner or admin)
+- GET    /api/bundles/:id                               - List MCPs in bundle
+- POST   /api/bundles/:id                               - Add MCP to bundle
+- DELETE /api/bundles/:id/:namespace                    - Remove MCP from bundle
+
+Bundle Token endpoints:    
+- POST   /api/bundles/:id/tokens                        - Generate token
+- GET    /api/bundles/:id/tokens                        - List tokens
+- DELETE /api/bundles/:id/tokens/:tokenId               - Revoke token
+
+Endpoints requiring bundle-token i.o. API-user token:
+- POST   /api/credentials/:bundleToken/mcps/:namespace - Bind credentials
+- PUT    /api/credentials/:bundleToken/mcps/:namespace - Update credentials
+- DELETE /api/credentials/:bundleToken/mcps/:namespace - Remove credentials
+- GET    /api/credentials/:bundleToken/mcps            - List all mcps and whether credentials are bound
 ```
 
-### `mcpbundler status`
+## 4.4 Authentication
 
-Check daemon status and view metrics.
+### 4.4.1 API Authentication
 
-```bash
-mcpbundler status
-```
+### 4.4.2 Bundle Authentication
 
-### `mcpbundler add <source>`
+### 4.4.3 MCP Authentication
+Modes: 
+- NONE
+- MASTER
+- USER_SET
 
-Add an MCP to the bundler.
 
-```bash
-mcpbundler add <source> [options]
-
-Arguments:
-  source                  MCP source URL (e.g., http://localhost:3001/sse)
-                         or registry path (e.g., mcpbundler.ai/mcps/files)
-
-Options:
-  -n, --namespace <name>  Namespace for the MCP
-  -c, --collection <id>   Collection ID to add to
-  --stateless             Mark as stateless (shared connection)
-```
-
-Examples:
-
-```bash
-# Add from direct URL
-mcpbundler add http://localhost:3001/sse --namespace files
-
-# Add from registry (coming soon)
-mcpbundler add mcpbundler.ai/mcps/notion --namespace notion
-```
-
-### `mcpbundler remove <namespace>`
-
-Remove an MCP by namespace.
-
-```bash
-mcpbundler remove <namespace> [options]
-
-Arguments:
-  namespace               Namespace of the MCP to remove
-
-Options:
-  -c, --collection <id>   Collection ID to remove from
-```
-
-### `mcpbundler list`
-
-List all configured MCPs.
-
-```bash
-mcpbundler list [options]
-
-Options:
-  -c, --collection <id>   Filter by collection ID
-```
-
-## 🌐 REST API
-
-### Collections
-
-#### List Collections
-
-```
-GET /api/collections
-```
-
-#### Get Collection
-
-```
-GET /api/collections/:id
-```
-
-#### Create Collection
-
-```
-POST /api/collections
-Content-Type: application/json
-
-{
-  "name": "my-collection"
-}
-```
-
-#### Delete Collection
-
-```
-DELETE /api/collections/:id
-```
-
-### Upstreams
-
-#### List Upstreams
-
-```
-GET /api/collections/:id/upstreams
-```
-
-#### Add Upstream
-
-```
-POST /api/collections/:id/upstreams
-Content-Type: application/json
-
-{
-  "namespace": "files",
-  "url": "http://localhost:3001/sse",
-  "version": "1.0.0",
-  "stateless": true,
-  "auth": {
-    "method": "bearer",
-    "token": "your-token"
-  }
-}
-```
-
-#### Remove Upstream
-
-```
-DELETE /api/collections/:id/upstreams/:namespace
-```
-
-### Tokens
-
-#### Generate Access Token
-
-```
-POST /api/collections/:id/tokens
-Content-Type: application/json
-
-{
-  "name": "production-token",           // required: descriptive name for the token
-  "description": "Production API token", // optional: detailed description
-  "expires_at": "2025-12-04T00:00:00.000Z" // optional: ISO 8601 timestamp
-}
-```
-
-Response:
-
-```json
-{
-  "token": "mcpb_live_a1b2c3d4e5f6...",  // actual token (only returned once on creation)
-  "token_id": "tok_xyz123",
-  "name": "production-token",
-  "description": "Production API token",
-  "expires_at": "2025-12-04T00:00:00.000Z",
-  "created_at": "2025-01-15T10:30:00.000Z"
-}
-```
-
-## 🔐 Authentication
-
-### Collection-Level Auth
-
-Clients authenticate with the bundler using Bearer tokens:
-
-```
-Authorization: Bearer <collection-token>
-```
-
-Generate tokens via the API:
-
-```bash
-curl -X POST http://localhost:3000/api/collections/{id}/tokens \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my-token", "description": "Token for my app"}'
-```
-
-### Upstream Auth
-
-MCPs can use various authentication methods:
+This enables scenarios where multiple users share a bundle but each
+uses their own containerized credentials to access the underlying MCP servers.
 
 #### Bearer Token
 
@@ -366,47 +253,7 @@ MCPs can use various authentication methods:
 }
 ```
 
-## 🗄️ Database
-
-MCP Bundler supports PostgreSQL, MySQL, and SQLite via Prisma.
-
-### Connection URLs
-
-**PostgreSQL:**
-
-```
-postgresql://user:password@localhost:5432/mcpbundler
-```
-
-**MySQL:**
-
-```
-mysql://user:password@localhost:3306/mcpbundler
-```
-
-**SQLite:**
-
-```
-file:./dev.db
-```
-
-### Migrations
-
-Run migrations after installation or schema changes:
-
-```bash
-npx prisma migrate dev
-```
-
-Generate Prisma client:
-
-```bash
-npx prisma generate
-```
-
-## 📊 Monitoring
-
-### Metrics Endpoint
+## 4.5 Metrics Endpoint
 
 ```
 GET /metrics
@@ -438,179 +285,34 @@ Example response:
 }
 ```
 
-### Logs
 
-Daemon logs are stored in `~/.mcpbundler/logs/`:
 
-- `bundler.log` - stdout
-- `bundler.error.log` - stderr
 
-View logs in real-time:
 
-```bash
-npm run pm2:logs
-# or
-pm2 logs mcpbundler
-```
+# 5. Other Information
 
-Clear all logs:
 
-```bash
-npm run pm2:logs:flush
-# or
-pm2 flush mcpbundler
-```
+## 5.1 Database 🗄️
 
-When pm2-logrotate is installed, logs are automatically:
-- Rotated when they reach 10MB
-- Compressed with gzip
-- Limited to 10 files per log type (oldest deleted automatically)
+MCP Bundler supports PostgreSQL and SQLite via Prisma.
 
-## 🏗️ Architecture
 
-```
-┌─────────────┐
-│  MCP Client │
-└──────┬──────┘
-       │ Bearer Token
-       ▼
-┌─────────────────┐
-│  MCP Bundler    │
-│  (Port 3000)    │
-└────────┬────────┘
-         │
-    ┌────┴────┬─────────┬─────────┐
-    ▼         ▼         ▼         ▼
-┌────────┐ ┌────────┐ ┌────────┐ ...
-│ Files  │ │Database│ │ Notion │
-│  MCP   │ │  MCP   │ │  MCP   │
-└────────┘ └────────┘ └────────┘
-```
-
-### Key Features
-
-- **Namespacing**: Tools are prefixed with namespace (e.g., `files__read_file`)
-- **Caching**: LRU cache with TTL for list operations
-- **Session Management**: Auto-cleanup of idle sessions
-- **Metering**: Track usage by collection, upstream, and tool
-
-## 🔧 Configuration
-
-### Environment Variables
-
-```env
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/mcpbundler
-
-# Server
-PORT=3000
-HOST=0.0.0.0
-
-# Auth
-MOCK_AUTH=false
-NODE_ENV=production
-
-# OAuth Encryption (required for OAuth support)
-OAUTH_ENCRYPTION_KEY=your-secret-key-here
-
-# Logging
-LOG_LEVEL=info
-```
-
-## 🐳 Docker
-
-### Docker Compose
-
-```yaml
-version: '3.8'
-
-services:
-  mcpbundler:
-    image: mcpbundler:latest
-    ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://user:password@db:5432/mcpbundler
-    depends_on:
-      - db
-
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: mcpbundler
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-volumes:
-  pgdata:
-```
-
-### Build Docker Image
-
-```bash
-docker build -t mcpbundler -f Dockerfile .
-```
-
-## 🛣️ Roadmap
-
-- [x] CLI interface
-- [x] Database persistence
-- [x] REST API
-- [x] Collection management
-- [x] Dynamic MCP addition/removal
-- [ ] OAuth2 authorization flow
-- [ ] Web UI for `/authorize` endpoint
-- [ ] Registry support (mcpbundler.ai)
-- [ ] Fine-grained permissions
-- [ ] User management
-- [ ] Rate limiting per collection
-- [ ] Webhook notifications
-
-## 📝 License
+## 5.2 License 📝
 
 MIT License - see LICENSE file for details
 
-## 🤝 Contributing
+## 5.3 Contributing 🤝
 
 Contributions are welcome! Please see CONTRIBUTING.md for guidelines.
 
-## 📚 Documentation
-
-- [Architecture](./ARCHITECTURE.md)
-- [API Reference](./docs/api.md) (coming soon)
-- [Development Guide](./docs/development.md) (coming soon)
-
-## ⚡ Performance
-
-- LRU caching with configurable TTL
-- Connection pooling for stateless upstreams
-- Automatic idle session cleanup
-- Efficient namespace-based routing
-
-## 🔒 Security
+## 5.4 Security 🔒
 
 - Token-based authentication
-- Encrypted OAuth credentials (AES-256-GCM)
+- Encrypted credentials (AES-256-GCM)
 - Permission-based access control
 - Rate limiting on SSE connections
-- HTTPS support (via reverse proxy)
-
-## 💡 Use Cases
-
-- **Development**: Manage multiple development MCPs from one endpoint
-- **Production**: Centralize MCP access with proper auth and metering
-- **Teams**: Share collections of MCPs across team members
-- **Multi-tenant**: Isolate MCPs per user or organization
 
 ## 🙋 Support
-
-For issues, questions, or contributions:
-
-- GitHub Issues: [repository]/issues
-- Documentation: [repository]/docs
-- Email: support@mcpbundler.ai (coming soon)
 
 ---
 

@@ -1,9 +1,3 @@
-import { Mcp } from "./api-client.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { UpstreamAuthConfig } from "../../core/config/schemas.js";
-import { buildAuthOptions } from "../../utils/upstream-auth.js";
-
 export const HELP_FOOTER = "\nFor more information and updates checkout: https://github.com/JRbemt/mcpbundler\n";
 
 export const BG_COLORS = {

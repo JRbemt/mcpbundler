@@ -34,3 +34,4 @@ dev.db-journal
 dev.db-shm
 dev.db-wal
 TODO
+.npmignore

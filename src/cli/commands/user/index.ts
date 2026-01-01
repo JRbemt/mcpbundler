@@ -18,61 +18,55 @@ export function createUserCommand(): Command {
 
   user
     .command("create")
-    .description("create a new API user (requires CREATE_USER permission or self-service enabled)")
-    .requiredOption("-n, --name <name>", "User name")
-    .requiredOption("-c, --contact <email>", "Contact email")
-    .option("-d, --department <department>", "Department")
-    .option("-p, --permissions <perms...>", "Permissions to grant (when using token)")
+    .description("create a new API user (requires valid token/ CREATE_USER permission or self-service enabled)")
+    .requiredOption("-n, --name <name>", "username")
+    .requiredOption("-c, --contact <email>", "contact email")
+    .option("-d, --department <department>", "department")
+    .option("-p, --permissions <perms...>", "permissions to grant (when using token)")
     .option("--admin", "Create as admin user (requires admin token)")
-    .action((options, command) => {
-      const globalOpts = command.parent.parent.opts();
-      createCommand({ ...options, ...globalOpts });
+    .action((options, cmd) => {
+      createCommand(cmd.optsWithGlobals());
     });
 
   user
     .command("list")
-    .description("list all API users (requires LIST_USERS permission or admin)")
-    .option("--include-revoked", "Include revoked users")
-    .action((options, command) => {
-      const globalOpts = command.parent.parent.opts();
-      listCommand({ ...options, ...globalOpts });
+    .description("list all API users (requires valid token/ LIST_USERS permission)")
+    .option("--include-revoked", "include revoked users")
+    .action((options, cmd) => {
+      listCommand(cmd.optsWithGlobals());
     });
 
   user
     .command("me")
     .description("view your own user profile (requires valid token)")
-    .action((options, command) => {
-      const globalOpts = command.parent.parent.opts();
-      meCommand({ ...options, ...globalOpts });
+    .action((options, cmd) => {
+      meCommand(cmd.optsWithGlobals());
     });
 
   user
     .command("revoke-created")
     .description("revoke user(s) you created (requires valid token)")
     .option("-u, --user-id <userId>", "ID of the user to revoke")
-    .option("--all", "Revoke ALL users you created")
-    .action((options, command) => {
-      const globalOpts = command.parent.parent.opts();
-      revokeCreatedCommand({ ...options, ...globalOpts });
+    .option("--all", "revoke ALL users you created")
+    .action((options, cmd) => {
+      revokeCreatedCommand(cmd.optsWithGlobals());
     });
 
   user
     .command("revoke-self")
     .description("revoke your own API key (requires valid token)")
-    .action((options, command) => {
-      const globalOpts = command.parent.parent.opts();
-      revokeSelfCommand({ ...options, ...globalOpts });
+    .action((options, cmd) => {
+      revokeSelfCommand(cmd.optsWithGlobals());
     });
 
   user
     .command("update")
     .description("update your own profile (requires valid token)")
-    .option("-n, --name <name>", "New name")
-    .option("-c, --contact <email>", "New contact email")
-    .option("-d, --department <department>", "New department")
-    .action((options, command) => {
-      const globalOpts = command.parent.parent.opts();
-      updateCommand({ ...options, ...globalOpts });
+    .option("-n, --name <name>", "new name")
+    .option("-c, --contact <email>", "new contact email")
+    .option("-d, --department <department>", "new department")
+    .action((options, cmd) => {
+      updateCommand(cmd.optsWithGlobals());
     });
 
   user.addHelpText("after", HELP_FOOTER);
