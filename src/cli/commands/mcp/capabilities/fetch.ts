@@ -1,14 +1,17 @@
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { MCPAuthConfig } from "../../../../core/config/schemas.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { Mcp } from "../../../utils/api-client.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { buildAuthOptions } from "../../../../core/auth/mcp-auth.js";
+import { buildAuthOptions } from "../../../../bundler/core/auth/mcp-auth.js";
+import { MCPAuthConfig } from "../../../../shared/domain/entities.js";
+
+type TransportType = "sse" | "streamable-http";
 
 /**
  * Check if MCP can be queried (has auth available or doesn"t need it)
  */
-export function canFetchMcp(mcp: Mcp, auth: MCPAuthConfig | undefined): { canQuery: boolean; reason?: string } {
+export function canFetchMcp(mcp: Pick<Mcp, "authStrategy">, auth?: MCPAuthConfig): { canQuery: boolean; reason?: string } {
     if (!mcp.authStrategy || mcp.authStrategy === "NONE") {
         return { canQuery: true };
     }
@@ -28,27 +31,40 @@ export function canFetchMcp(mcp: Mcp, auth: MCPAuthConfig | undefined): { canQue
     return { canQuery: false, reason: "Unknown auth configuration" };
 }
 
+
 /**
- * Connect to MCP and fetch capabilities
+ * Fetch capabilities using a specific transport type
  */
-export async function fetchMcpCapabilities(mcp: Mcp, auth: MCPAuthConfig | undefined): Promise<{
+export async function fetchMcpCapabilities(
+    mcp: Mcp,
+    auth: MCPAuthConfig | undefined,
+    transportType: TransportType = "streamable-http",
+    timeoutMs: number = 3000
+): Promise<{
     tools: Array<{ name: string; description?: string }>;
     resources: Array<{ name: string; uri: string; description?: string }>;
     prompts: Array<{ name: string; description?: string }>;
 } | null> {
-    const TIMEOUT_MS = 10000;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        // Build transport options with auth (already in correct SSEClientTransportOptions format)
         const authOptions = buildAuthOptions(auth);
+        const url = new URL(mcp.url);
 
-        // Create client
-        const transport = new SSEClientTransport(
-            new URL(mcp.url),
-            authOptions
-        );
+        // StreamableHTTP requires Accept header with both application/json and text/event-stream
+        if (transportType === "streamable-http") {
+            authOptions.requestInit = authOptions.requestInit || {};
+            authOptions.requestInit.headers = {
+                ...authOptions.requestInit.headers,
+                "Accept": "application/json, text/event-stream",
+            };
+        }
+
+        // Create transport based on type
+        const transport = transportType === "streamable-http"
+            ? new StreamableHTTPClientTransport(url, authOptions)
+            : new SSEClientTransport(url, authOptions);
 
         const client = new Client(
             {
@@ -63,9 +79,8 @@ export async function fetchMcpCapabilities(mcp: Mcp, auth: MCPAuthConfig | undef
         try {
             await client.connect(transport, { signal: controller.signal });
 
-            // Fetch capabilities with timeout check
             if (controller.signal.aborted) {
-                throw new Error(`Timeout after ${TIMEOUT_MS}ms`);
+                throw new Error(`Timeout after ${timeoutMs}ms`);
             }
 
             const [toolsResult, resourcesResult, promptsResult] = await Promise.all([
@@ -74,7 +89,6 @@ export async function fetchMcpCapabilities(mcp: Mcp, auth: MCPAuthConfig | undef
                 client.listPrompts().catch(() => ({ prompts: [] })),
             ]);
 
-            // Close connection
             await client.close();
 
             return {
@@ -90,10 +104,13 @@ export async function fetchMcpCapabilities(mcp: Mcp, auth: MCPAuthConfig | undef
         }
     } catch (error: any) {
         if (error.name === "AbortError" || controller.signal.aborted) {
-            console.error(`Failed to fetch capabilities: Timeout after ${TIMEOUT_MS}ms`);
+            console.error(`Failed to fetch capabilities (${transportType}): Timeout after ${timeoutMs}ms`);
         } else {
             const errorMessage = error.response?.data?.error || error.message;
-            console.error(`Failed to fetch capabilities: ${errorMessage}`);
+            // Only log error if we're not falling back
+            if (transportType === "sse") {
+                console.error(`Failed to fetch capabilities: ${errorMessage}`);
+            }
         }
         return null;
     } finally {

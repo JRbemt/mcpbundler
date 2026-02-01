@@ -22,99 +22,51 @@
 
 import express, { Request, Response, Router } from "express";
 import { PrismaClient } from "@prisma/client";
-import logger from "../../utils/logger.js";
 import {
-  AccessTokenRepository,
+  BundleTokenRepository,
   ApiUserRepository,
   BundleRepository,
   McpRepository,
-} from "../database/repositories/index.js";
-import { McpPermissionsSchema, MCPConfig } from "../../core/config/schemas.js";
-import { z } from "zod";
-import { sendZodError } from "./utils/error-formatter.js";
+} from "../../shared/infra/repository/index.js";
+import { asyncHandler, sendNotFound, sendForbidden, validatedHandler, sent } from "./utils/route-utils.js";
+import { MCPResponseSchema, McpResponse } from "./mcps.js";
 import { ErrorResponse } from "./utils/schemas.js";
-import { McpResponse, MCPResponseSchema } from "./mcps.js";
-import { AuditApiAction, auditApiLogSession } from "../../utils/audit-log.js";
+import {
+  // Request schemas
+  CreateBundleRequestSchema,
+  GenerateTokenRequestSchema,
+  AddMcpsByNamespaceRequestSchema,
+  // Response types
+  BundleResponse,
+  CreateBundleResponse,
+  GenerateTokenResponse,
+  ListTokenResponse,
+  AddMcpByNamespaceResponse,
+  CreateBundleRequest,
+  GenerateTokenRequest,
+  AddMcpsByNamespaceRequest,
+  // Transformers
+  transformBundleResponse,
+  transformBundleListResponse,
+  transformCreateBundleResponse,
+  transformTokenListResponse,
+  transformGenerateTokenResponse,
+} from "./utils/bundle-transformers.js";
+import { AuditApiAction } from "../../shared/utils/audit-log.js";
+import logger from "../../shared/utils/logger.js";
 
-/**
- * Request/Response schemas for bundle endpoints
- */
+// Re-export types for backwards compatibility
+export type {
+  CreateBundleRequest,
+  GenerateTokenRequest,
+  AddMcpsByNamespaceRequest,
+  CreateBundleResponse,
+  GenerateTokenResponse,
+  BundleResponse,
+  ListTokenResponse,
+  AddMcpByNamespaceResponse,
+};
 
-const BundleCreatorSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  contact: z.string(),
-  department: z.string().nullable(),
-  isAdmin: z.boolean(),
-});
-
-const CreateBundleRequestSchema = z.object({
-  name: z.string().min(1, "Bundle name is required and cannot be empty"),
-  description: z.string(),
-});
-
-const CreateBundleResponseSchema = CreateBundleRequestSchema.extend({
-  id: z.string(),
-  createdAt: z.date(),
-  createdBy: BundleCreatorSchema.nullable(),
-});
-
-const BundleMcpWithPermissionsSchema = MCPResponseSchema.extend({
-  permissions: McpPermissionsSchema,
-});
-
-const BundleResponseSchema = CreateBundleResponseSchema.extend({
-  mcps: z.array(BundleMcpWithPermissionsSchema),
-  createdBy: BundleCreatorSchema.nullable(),
-});
-
-const GenerateTokenRequestSchema = z.object({
-  name: z.string().min(1, "Token name is required and cannot be empty"),
-  description: z.string().optional(),
-  expiresAt: z.string().datetime().optional(),
-});
-const TokenResponseSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string().nullable(),
-  expiresAt: z.date().nullable(),
-  revoked: z.boolean(),
-  createdAt: z.date(),
-});
-const ListTokenReponseSchema = z.array(TokenResponseSchema);
-
-const GenerateTokenResponseSchema = TokenResponseSchema.extend({
-  token: z.string(),
-});
-
-
-const _AddMcpByNamespaceRequestSchema = z.object({
-  namespace: z.string().min(1, "Namespace required"),
-  permissions: McpPermissionsSchema.optional(),
-});
-
-const AddMcpsByNamespaceRequestSchema = z.union([
-  _AddMcpByNamespaceRequestSchema,
-  z.array(_AddMcpByNamespaceRequestSchema).min(1, "At least one MCP required")
-]);
-
-const AddMcpByNamespaceResponseSchema = z.object({
-  added: z.array(MCPResponseSchema),
-  errors: z.array(z.object({
-    namespace: z.string(),
-    reason: z.string(),
-  })).optional(),
-});
-
-export type CreateBundleRequest = z.infer<typeof CreateBundleRequestSchema>;
-export type GenerateTokenRequest = z.infer<typeof GenerateTokenRequestSchema>;
-export type AddMcpsByNamespaceRequest = z.infer<typeof AddMcpsByNamespaceRequestSchema>;
-
-export type CreateBundleResponse = z.infer<typeof CreateBundleResponseSchema>;
-export type GenerateTokenResponse = z.infer<typeof GenerateTokenResponseSchema>;
-export type BundleResponse = z.infer<typeof BundleResponseSchema>;
-export type ListTokenReponse = z.infer<typeof ListTokenReponseSchema>;
-export type AddMcpByNamespaceResponse = z.infer<typeof AddMcpByNamespaceResponseSchema>;
 /**
  * Create bundle management routes
  *
@@ -127,639 +79,390 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
   const router = express.Router();
   const bundleRepo = new BundleRepository(prisma);
   const mcpRepo = new McpRepository(prisma);
-  const tokenRepo = new AccessTokenRepository(prisma);
+  const tokenRepo = new BundleTokenRepository(prisma);
   const userRepo = new ApiUserRepository(prisma);
 
   /**
-   * GET /api/bundles/me
-   * List bundles created by the authenticated user or their descendants
-   */
-  router.get('/me', async (req: Request, res: Response) => {
-    try {
-      const userIds = await userRepo.collectDescendantIds(req.apiAuth!.userId);
-      const ids = [req.apiAuth!.userId, ...userIds];
-      const bundles = await bundleRepo.listByCreatorHierarchy(ids);
-
-      const response = bundles.map((bundle) => (BundleResponseSchema.parse({
-        ...bundle,
-        mcps: bundle.mcps.map((mcpBundleEntry) => ({
-          ...MCPResponseSchema.strip().parse(mcpBundleEntry.mcp),
-          permissions: {
-            allowedTools: JSON.parse(mcpBundleEntry.allowedTools),
-            allowedResources: JSON.parse(mcpBundleEntry.allowedResources),
-            allowedPrompts: JSON.parse(mcpBundleEntry.allowedPrompts),
-          },
-        })),
-      })));
-
-      auditApiLogSession({
+    * GET /api/bundles
+    * List all bundles
+    */
+  router.get(
+    "/",
+    asyncHandler(
+      null,
+      async () => {
+        const bundles = await bundleRepo.list();
+        return transformBundleListResponse(bundles);
+      },
+      {
         action: AuditApiAction.BUNDLE_VIEW,
-        success: true,
-        details: { count: bundles.length, scope: "user_hierarchy" }
-      });
-
-      res.json(response);
-    } catch (error: any) {
-      auditApiLogSession({
-        action: AuditApiAction.BUNDLE_VIEW,
-        success: false,
-        errorMessage: error.message
-      });
-      logger.error({ error: error.issues.message }, 'Failed to list user bundles');
-      res.status(500).json({ error: 'Failed to list bundles' });
-    }
-  });
+        errorMessage: "Failed to list bundles",
+        getAuditDetails: (_req, result) => ({
+          scope: "all",
+          count: result?.length,
+        }),
+      }
+    )
+  );
 
   /**
-   * GET /api/bundles
-   * List all bundles
+   * GET /api/bundles/me
+   * List bundles created by user or descendants
    */
-  router.get('/', async (req: Request, res: Response) => {
-    try {
-      const bundles = await bundleRepo.list();
-
-      const response = bundles.map((bundle) => (BundleResponseSchema.parse({
-        ...bundle,
-        mcps: bundle.mcps.map((mcpBundleEntry) => ({
-          ...MCPResponseSchema.strip().parse(mcpBundleEntry.mcp),
-          permissions: {
-            allowedTools: JSON.parse(mcpBundleEntry.allowedTools),
-            allowedResources: JSON.parse(mcpBundleEntry.allowedResources),
-            allowedPrompts: JSON.parse(mcpBundleEntry.allowedPrompts),
-          },
-        })),
-      })));
-
-      auditApiLogSession({
+  router.get(
+    "/me",
+    asyncHandler(
+      null,
+      async (req) => {
+        const descendantIds = await userRepo.collectDescendantIds(req.apiAuth!.userId);
+        const ids = [req.apiAuth!.userId, ...descendantIds];
+        const bundles = await bundleRepo.listByCreators(ids);
+        return transformBundleListResponse(bundles);
+      },
+      {
         action: AuditApiAction.BUNDLE_VIEW,
-        success: true,
-        details: { count: bundles.length, scope: "all" }
-      });
-
-      res.json(response);
-    } catch (error: any) {
-      auditApiLogSession({
-        action: AuditApiAction.BUNDLE_VIEW,
-        success: false,
-        errorMessage: error.message
-      });
-      logger.error({ error: error.issues.message }, 'Failed to list bundles');
-      res.status(500).json({ error: 'Failed to list bundles' });
-    }
-  });
+        errorMessage: "Failed to list bundles",
+        getAuditDetails: (_req, result) => ({
+          scope: "user_hierarchy",
+          count: result?.length,
+        }),
+      }
+    )
+  );
 
   /**
    * GET /api/bundles/:id
-   * Get a specific bundle with its MCPs
    */
-  router.get('/:id', async (req: Request, res: Response<BundleResponse | ErrorResponse>) => {
-    try {
-      const bundle = await bundleRepo.findById(req.params.id);
+  router.get(
+    "/:id",
+    asyncHandler(
+      null,
+      async (req: Request<{ id: string }>, res) => {
+        const bundle = await bundleRepo.findById(req.params.id);
+        if (!bundle) {
+          return sendNotFound(res, "Bundle", req, AuditApiAction.BUNDLE_VIEW, {
+            bundleId: req.params.id,
+          });
+        }
 
-      if (!bundle) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_VIEW,
-          success: false,
-          errorMessage: "Bundle not found",
-          details: { bundleId: req.params.id }
-        });
-        res.status(404).json({ error: 'Bundle not found' });
-        return;
+        return transformBundleResponse(bundle);
+      },
+      {
+        action: AuditApiAction.BUNDLE_VIEW,
+        errorMessage: "Failed to get bundle",
+        getAuditDetails: (req, result) => ({
+          bundleId: req.params.id,
+          mcpCount: result?.mcps.length,
+        }),
       }
-
-      const response = BundleResponseSchema.parse({
-        ...bundle,
-        mcps: bundle.mcps.map((mcpBundleEntry) => ({
-          ...MCPResponseSchema.strip().parse(mcpBundleEntry.mcp),
-          permissions: {
-            allowedTools: JSON.parse(mcpBundleEntry.allowedTools),
-            allowedResources: JSON.parse(mcpBundleEntry.allowedResources),
-            allowedPrompts: JSON.parse(mcpBundleEntry.allowedPrompts),
-          },
-        })),
-      });
-
-      auditApiLogSession({
-        action: AuditApiAction.BUNDLE_VIEW,
-        success: true,
-        details: { bundleId: bundle.id, mcpCount: bundle.mcps.length }
-      });
-
-      res.json(response);
-    } catch (error: any) {
-      auditApiLogSession({
-        action: AuditApiAction.BUNDLE_VIEW,
-        success: false,
-        errorMessage: error.message,
-        details: { bundleId: req.params.id }
-      });
-      logger.error({ error: error.issues.message }, 'Failed to get bundle');
-      res.status(500).json({ error: 'Failed to get bundle' });
-    }
-  });
+    )
+  );
 
   /**
    * POST /api/bundles
-   * Create a new bundle
    */
-  router.post('/', async (req: Request<{}, CreateBundleResponse | ErrorResponse, CreateBundleRequest>, res: Response<CreateBundleResponse | ErrorResponse>): Promise<void> => {
-    try {
-      const data = CreateBundleRequestSchema.parse(req.body);
+  router.post(
+    "/",
+    ...validatedHandler(
+      CreateBundleRequestSchema,
+      null,
+      async (req, _res, data: CreateBundleRequest) => {
+        const createdById = req.apiAuth?.userId ?? null;
+        const { record } = await bundleRepo.create({
+          name: data.name,
+          description: data.description,
+          createdById,
+        });
 
-      const createdById = req.apiAuth?.userId;
-      const bundle = await bundleRepo.create(data.name, data.description, createdById);
-
-      auditApiLogSession({
+        logger.info({ bundleId: record.id }, "Created bundle");
+        return transformCreateBundleResponse(record);
+      },
+      {
         action: AuditApiAction.BUNDLE_CREATE,
-        details: {
-          bundleId: bundle.id,
-          userId: bundle.id
-        }
-      })
-
-      res.status(201).json({
-        id: bundle.id,
-        name: bundle.name,
-        description: bundle.description,
-        createdAt: bundle.createdAt,
-        createdBy: bundle.createdBy,
-      });
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        logger.error({
-          endpoint: 'POST /api/bundles',
-          error: error.issues,
-          receivedData: req.body,
-        }, 'Validation failed: missing or invalid parameters');
-        sendZodError(res, error, "Invalid bundle creation request");
-        return;
+        successStatus: 201,
+        errorMessage: "Failed to create bundle",
+        getAuditDetails: (_req, result) => ({
+          bundleId: result?.id,
+        }),
       }
-
-      logger.error({ error: error.issues.message }, 'Failed to create bundle');
-      res.status(500).json({ error: `Failed to create bundle ${error.message}` });
-    }
-  });
+    )
+  );
 
   /**
    * DELETE /api/bundles/:id
-   * Delete a bundle (requires hierarchical ownership or admin)
-   * Tokens cascade delete automatically via Prisma
    */
-  router.delete('/:id', async (req: Request, res: Response) => {
-    try {
-      const bundle = await bundleRepo.findById(req.params.id);
+  router.delete(
+    "/:id",
+    asyncHandler(
+      null,
+      async (req: Request<{ id: string }>, res) => {
+        const bundle = await bundleRepo.findById(req.params.id);
+        if (!bundle) {
+          return sendNotFound(res, "Bundle", req, AuditApiAction.BUNDLE_DELETE, {
+            bundleId: req.params.id,
+          });
+        }
 
-      if (!bundle) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_DELETE,
-          success: false,
-          errorMessage: "Bundle not found",
-          details: { bundleId: req.params.id }
-        });
-        res.status(404).json({ error: 'Bundle not found' });
-        return;
-      }
+        if (!(await userRepo.isAuthorized(req.apiAuth!.userId, bundle))) {
+          return sendForbidden(
+            res,
+            req,
+            AuditApiAction.BUNDLE_DELETE,
+            "You can only delete bundles you created or that were created by users you created",
+            { bundleId: req.params.id }
+          );
+        }
 
-      if (!(await userRepo.isAuthorized(req.apiAuth!.userId, bundle))) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_DELETE,
-          success: false,
-          errorMessage: "Insufficient permissions",
-          details: { bundleId: req.params.id }
-        });
-        res.status(403).json({
-          error: 'Forbidden',
-          message: 'You can only delete bundles you created or that were created by users you created',
-        });
-        return;
-      }
+        await bundleRepo.delete(req.params.id);
+        logger.info({ bundleId: req.params.id }, "Deleted bundle");
 
-      await bundleRepo.delete(req.params.id);
-
-      auditApiLogSession({
+        return sent();
+      },
+      {
         action: AuditApiAction.BUNDLE_DELETE,
-        success: true,
-        details: { bundleId: req.params.id, bundleName: bundle.name }
-      });
-
-      logger.info({ bundleId: req.params.id, deletedBy: req.apiAuth!.userId }, "Deleted bundle");
-
-      res.status(204).send();
-    } catch (error: any) {
-      auditApiLogSession({
-        action: AuditApiAction.BUNDLE_DELETE,
-        success: false,
-        errorMessage: error.message,
-        details: { bundleId: req.params.id }
-      });
-      logger.error({ error: error.issues.message }, 'Failed to delete bundle');
-      res.status(500).json({ error: 'Failed to delete bundle' });
-    }
-  });
+        successStatus: 204,
+        errorMessage: "Failed to delete bundle",
+        getAuditDetails: (req) => ({ bundleId: req.params.id }),
+      }
+    )
+  );
 
   /**
    * POST /api/bundles/:id
-   * Add MCP(s) to a bundle by namespace(s) - accepts single object or array
-   * MCPs must exist in the master registry
+   * Add MCP(s) by namespace
    */
-  router.post('/:id', async (req: Request<{ id: string }, AddMcpByNamespaceResponse | ErrorResponse, AddMcpsByNamespaceRequest>, res: Response<AddMcpByNamespaceResponse | ErrorResponse>): Promise<void> => {
-    try {
-      const data = AddMcpsByNamespaceRequestSchema.parse(req.body);
-
-      // Validate bundle exists
-      const bundle = await bundleRepo.findById(req.params.id);
-      if (!bundle) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_UPDATE,
-          success: false,
-          errorMessage: "Bundle not found",
-          details: { bundleId: req.params.id }
-        });
-        res.status(404).json({ error: 'Bundle not found' });
-        return;
-      }
-
-      if (!(await userRepo.isAuthorized(req.apiAuth!.userId, bundle))) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_UPDATE,
-          success: false,
-          errorMessage: "Insufficient permissions",
-          details: { bundleId: req.params.id }
-        });
-        res.status(403).json({
-          error: 'Forbidden',
-          message: 'You can only modify bundles you created or that were created by users you created',
-        });
-        return;
-      }
-
-      // Normalize input to array
-      const mcpRequests = Array.isArray(data) ? data : [data];
-
-      const added: Array<McpResponse> = [];
-      const errors: Array<{ namespace: string; reason: string }> = [];
-
-      // Process each MCP request
-      for (const mcpRequest of mcpRequests) {
-        // Find MCP in master registry
-        const mcp = await mcpRepo.findByNamespace(mcpRequest.namespace);
-
-        if (!mcp) {
-          errors.push({ namespace: mcpRequest.namespace, reason: 'MCP not found in master registry' });
-          continue;
+  router.post(
+    "/:id",
+    ...validatedHandler(
+      AddMcpsByNamespaceRequestSchema,
+      null,
+      async (req: Request<{ id: string }>, res, data: AddMcpsByNamespaceRequest) => {
+        const bundle = await bundleRepo.findById(req.params.id);
+        if (!bundle) {
+          return sendNotFound(res, "Bundle", req, AuditApiAction.BUNDLE_UPDATE, {
+            bundleId: req.params.id,
+          });
         }
 
-        // Check if MCP already in bundle
-        const existing = await bundleRepo.findMcpInBundle(req.params.id, mcp.id);
-
-        if (existing) {
-          errors.push({ namespace: mcpRequest.namespace, reason: 'Already exists in bundle' });
-          continue;
+        if (!(await userRepo.isAuthorized(req.apiAuth!.userId, bundle))) {
+          return sendForbidden(
+            res,
+            req,
+            AuditApiAction.BUNDLE_UPDATE,
+            "You can only modify bundles you created or that were created by users you created",
+            { bundleId: req.params.id }
+          );
         }
 
-        // Add MCP to bundle with permissions
-        await bundleRepo.addMcp(req.params.id, mcp.id, mcpRequest.permissions);
+        const requests = Array.isArray(data) ? data : [data];
+        const added: McpResponse[] = [];
+        const errors: Array<{ namespace: string; reason: string }> = [];
 
-        added.push(MCPResponseSchema.strip().parse(mcp));
+        for (const reqMcp of requests) {
+          const mcp = await mcpRepo.findByNamespace(reqMcp.namespace);
+          if (!mcp) {
+            errors.push({ namespace: reqMcp.namespace, reason: "MCP not found in master registry" });
+            continue;
+          }
 
-        logger.info(
-          { bundleId: req.params.id, namespace: mcp.namespace },
-          "Added MCP to bundle"
-        );
-      }
+          const exists = await bundleRepo.findMcpInBundle(req.params.id, mcp.id);
+          if (exists) {
+            errors.push({ namespace: reqMcp.namespace, reason: "Already exists in bundle" });
+            continue;
+          }
 
-      // Build aggregated error if any MCPs had issues
-      if (errors.length > 0) {
-        const errorMessages = errors.map(e => `${e.namespace}: ${e.reason}`).join('; ');
-        const errorMessage = `Failed to add some MCPs: ${errorMessages}`;
+          await bundleRepo.addMcp(req.params.id, mcp.id, reqMcp.permissions);
+          added.push(MCPResponseSchema.strip().parse(mcp));
+        }
 
-        logger.error({
-          endpoint: 'POST /api/bundles/:id',
-          bundleId: req.params.id,
-          errors,
-          added: added.map(a => a.namespace),
-        }, errorMessage);
+        if (errors.length > 0) {
+          return {
+            added,
+            errors,
+          };
+        }
 
-        res.status(207).json({
-          added,
-          error: errorMessage,
-          errors,
-        });
-        return;
-      }
-
-      auditApiLogSession({
+        return { added };
+      },
+      {
         action: AuditApiAction.BUNDLE_UPDATE,
-        success: true,
-        details: {
+        successStatus: 207,
+        errorMessage: "Failed to add MCP(s)",
+        getAuditDetails: (req, result: AddMcpByNamespaceResponse | undefined) => ({
           bundleId: req.params.id,
-          addedMcps: added.map(m => m.namespace),
-          addedCount: added.length
-        }
-      });
-
-      res.status(201).json({
-        added,
-      });
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_UPDATE,
-          success: false,
-          errorMessage: "Validation error",
-          details: { bundleId: req.params.id }
-        });
-        logger.error({
-          endpoint: 'POST /api/bundles/:id',
-          bundleId: req.params.id,
-          error: error.issues,
-          receivedData: req.body,
-        }, 'Validation failed: missing or invalid parameters for adding MCPs by namespace');
-        sendZodError(res, error, "Invalid request");
-        return;
+          addedCount: result?.added.length,
+          errors: result?.errors?.length,
+        }),
       }
-
-      auditApiLogSession({
-        action: AuditApiAction.BUNDLE_UPDATE,
-        success: false,
-        errorMessage: error.message,
-        details: { bundleId: req.params.id }
-      });
-      logger.error({ error: error.issues.message, bundleId: req.params.id }, 'Failed to add MCP(s)');
-      res.status(500).json({ error: 'Failed to add MCP(s)' });
-    }
-  });
+    )
+  );
 
   /**
    * DELETE /api/bundles/:id/:namespace
-   * Remove an MCP from a bundle (requires hierarchical ownership)
    */
-  router.delete('/:id/:namespace', async (req: Request, res: Response) => {
-    try {
-      const bundle = await bundleRepo.findById(req.params.id);
-
-      if (!bundle) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_UPDATE,
-          success: false,
-          errorMessage: "Bundle not found",
-          details: { bundleId: req.params.id, namespace: req.params.namespace }
-        });
-        res.status(404).json({ error: 'Bundle not found' });
-        return;
-      }
-
-      if (!(await userRepo.isAuthorized(req.apiAuth!.userId, bundle))) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_UPDATE,
-          success: false,
-          errorMessage: "Insufficient permissions",
-          details: { bundleId: req.params.id, namespace: req.params.namespace }
-        });
-        res.status(403).json({
-          error: 'Forbidden',
-          message: 'You can only modify bundles you created or that were created by users you created',
-        });
-        return;
-      }
-
-      // Find the master MCP by namespace
-      const mcp = await mcpRepo.findByNamespace(req.params.namespace);
-
-      if (!mcp) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_UPDATE,
-          success: false,
-          errorMessage: "MCP not found",
-          details: { bundleId: req.params.id, namespace: req.params.namespace }
-        });
-        res.status(404).json({ error: 'MCP not found' });
-        return;
-      }
-
-      // Check if MCP exists in bundle
-      const bundleMcp = await bundleRepo.findMcpInBundle(
-        req.params.id,
-        mcp.id
-      );
-
-      if (!bundleMcp) {
-        auditApiLogSession({
-          action: AuditApiAction.BUNDLE_UPDATE,
-          success: false,
-          errorMessage: "MCP not found in bundle",
-          details: { bundleId: req.params.id, namespace: req.params.namespace }
-        });
-        res.status(404).json({ error: "MCP not found in bundle" });
-        return;
-      }
-
-      await bundleRepo.removeMcp(req.params.id, mcp.id);
-
-      auditApiLogSession({
-        action: AuditApiAction.BUNDLE_UPDATE,
-        success: true,
-        details: {
-          bundleId: req.params.id,
-          removedMcp: req.params.namespace,
-          operation: "remove_mcp"
+  router.delete(
+    "/:id/:namespace",
+    asyncHandler(
+      null,
+      async (req: Request<{ id: string; namespace: string }>, res) => {
+        const bundle = await bundleRepo.findById(req.params.id);
+        if (!bundle) {
+          return sendNotFound(res, "Bundle", req, AuditApiAction.BUNDLE_UPDATE, {
+            bundleId: req.params.id,
+          });
         }
-      });
 
-      logger.info(
-        { bundleId: req.params.id, namespace: req.params.namespace },
-        "Removed MCP from bundle"
-      );
+        if (!(await userRepo.isAuthorized(req.apiAuth!.userId, bundle))) {
+          return sendForbidden(
+            res,
+            req,
+            AuditApiAction.BUNDLE_UPDATE,
+            "You can only modify bundles you created or that were created by users you created",
+            { bundleId: req.params.id }
+          );
+        }
 
-      res.status(204).send();
-    } catch (error: any) {
-      auditApiLogSession({
+        const mcp = await mcpRepo.findByNamespace(req.params.namespace);
+        if (!mcp) {
+          return sendNotFound(res, "MCP", req, AuditApiAction.BUNDLE_UPDATE, {
+            namespace: req.params.namespace,
+          });
+        }
+
+        const bundleMcp = await bundleRepo.findMcpInBundle(req.params.id, mcp.id);
+        if (!bundleMcp) {
+          return sendNotFound(res, "MCP in bundle", req, AuditApiAction.BUNDLE_UPDATE, {
+            namespace: req.params.namespace,
+          });
+        }
+
+        await bundleRepo.removeMcp(req.params.id, mcp.id);
+        logger.info({ bundleId: req.params.id, namespace: req.params.namespace }, "Removed MCP");
+
+        return sent();
+      },
+      {
         action: AuditApiAction.BUNDLE_UPDATE,
-        success: false,
-        errorMessage: error.message,
-        details: { bundleId: req.params.id, namespace: req.params.namespace }
-      });
-      logger.error({ error: error.issues.message }, 'Failed to remove MCP');
-      res.status(500).json({ error: 'Failed to remove MCP' });
-    }
-  });
-
+        successStatus: 204,
+        errorMessage: "Failed to remove MCP",
+        getAuditDetails: (req) => ({
+          bundleId: req.params.id,
+          namespace: req.params.namespace,
+        }),
+      }
+    )
+  );
 
   /**
    * POST /api/bundles/:id/tokens
-   * Generate a new bundle token
    */
-  router.post('/:id/tokens', async (req: Request<{ id: string }, GenerateTokenResponse | ErrorResponse, GenerateTokenRequest>, res: Response<GenerateTokenResponse | ErrorResponse>): Promise<void> => {
-    try {
-      const data = GenerateTokenRequestSchema.parse(req.body);
-
-      const bundle = await bundleRepo.findById(req.params.id);
-      if (!bundle) {
-        auditApiLogSession({
-          action: AuditApiAction.TOKEN_CREATE,
-          success: false,
-          errorMessage: "Bundle not found",
-          details: { bundleId: req.params.id }
-        });
-        res.status(404).json({ error: 'Bundle not found' });
-        return;
-      }
-
-      const expiresAt = data.expiresAt ? new Date(data.expiresAt) : undefined;
-      const { token, record } = await tokenRepo.generate(
-        req.params.id,
-        data.name,
-        req.apiAuth!.userId,
-        data.description,
-        expiresAt,
-      );
-
-      auditApiLogSession({
-        action: AuditApiAction.TOKEN_CREATE,
-        success: true,
-        details: {
-          bundleId: req.params.id,
-          tokenId: record.id,
-          tokenName: data.name
+  router.post(
+    "/:id/tokens",
+    ...validatedHandler(
+      GenerateTokenRequestSchema,
+      null,
+      async (req: Request<{ id: string }>, res, data: GenerateTokenRequest) => {
+        const bundle = await bundleRepo.findById(req.params.id);
+        if (!bundle) {
+          return sendNotFound(res, "Bundle", req, AuditApiAction.TOKEN_CREATE, {
+            bundleId: req.params.id,
+          });
         }
-      });
 
-      logger.info(
-        { bundleId: req.params.id, tokenId: record.id, name: data.name },
-        "Generated new bundle token"
-      );
-
-      res.status(201).json(GenerateTokenResponseSchema.strip().parse({ ...record, token }));
-
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        auditApiLogSession({
-          action: AuditApiAction.TOKEN_CREATE,
-          success: false,
-          errorMessage: "Validation error",
-          details: { bundleId: req.params.id }
-        });
-        logger.error({
-          endpoint: 'POST /api/bundles/:id/tokens',
+        const expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
+        const { record, token } = await tokenRepo.create({
           bundleId: req.params.id,
-          error: error.issues,
-          receivedData: req.body,
-        }, 'Validation failed: missing or invalid token generation parameters');
-        sendZodError(res, error, "Invalid token generation request");
-        return;
-      }
+          name: data.name,
+          description: data.description ?? null,
+          createdById: req.apiAuth!.userId,
+          expiresAt,
+          revoked: false,
+          lastUsedAt: null,
+        });
 
-      auditApiLogSession({
+        logger.info({ bundleId: req.params.id, tokenId: record.id }, "Generated token");
+        return transformGenerateTokenResponse(record, token);
+      },
+      {
         action: AuditApiAction.TOKEN_CREATE,
-        success: false,
-        errorMessage: error.message,
-        details: { bundleId: req.params.id }
-      });
-      logger.error({ error: error.issues.message, bundleId: req.params.id }, 'Failed to generate token');
-      res.status(500).json({ error: 'Failed to generate token' });
-    }
-  });
+        successStatus: 201,
+        errorMessage: "Failed to generate token",
+        getAuditDetails: (_req, result) => ({
+          tokenId: result?.id,
+        }),
+      }
+    )
+  );
 
   /**
    * GET /api/bundles/:id/tokens
-   * List all tokens for a bundle
    */
-  router.get('/:id/tokens', async (req: Request, res: Response<ListTokenReponse | ErrorResponse>) => {
-    try {
-      const bundle = await bundleRepo.findById(req.params.id);
-      if (!bundle) {
-        auditApiLogSession({
-          action: AuditApiAction.TOKEN_VIEW,
-          success: false,
-          errorMessage: "Bundle not found",
-          details: { bundleId: req.params.id }
-        });
-        res.status(404).json({ error: 'Bundle not found' });
-        return;
+  router.get(
+    "/:id/tokens",
+    asyncHandler(
+      null,
+      async (req: Request<{ id: string }>, res) => {
+        const bundle = await bundleRepo.findById(req.params.id);
+        if (!bundle) {
+          return sendNotFound(res, "Bundle", req, AuditApiAction.TOKEN_VIEW, {
+            bundleId: req.params.id,
+          });
+        }
+
+        const tokens = await tokenRepo.list(req.params.id);
+        return transformTokenListResponse(tokens);
+      },
+      {
+        action: AuditApiAction.TOKEN_VIEW,
+        errorMessage: "Failed to list tokens",
+        getAuditDetails: (_req, result) => ({
+          tokenCount: result?.length,
+        }),
       }
-
-      const tokens = await tokenRepo.list(req.params.id);
-      const parsedTokens = tokens.map((t) => TokenResponseSchema.strip().parse(t));
-
-      auditApiLogSession({
-        action: AuditApiAction.TOKEN_VIEW,
-        success: true,
-        details: { bundleId: req.params.id, tokenCount: tokens.length }
-      });
-
-      res.json(ListTokenReponseSchema.parse(parsedTokens));
-
-    } catch (error: any) {
-      auditApiLogSession({
-        action: AuditApiAction.TOKEN_VIEW,
-        success: false,
-        errorMessage: error.message,
-        details: { bundleId: req.params.id }
-      });
-      logger.error({ error: error.issues.message }, 'Failed to list tokens');
-      res.status(500).json({ error: 'Failed to list tokens' });
-    }
-  });
+    )
+  );
 
   /**
    * DELETE /api/bundles/:id/tokens/:tokenId
-   * Revoke/delete a token
    */
-  router.delete('/:id/tokens/:tokenId', async (req: Request, res: Response) => {
-    try {
-      const token = await tokenRepo.findById(req.params.tokenId);
+  router.delete(
+    "/:id/tokens/:tokenId",
+    asyncHandler(
+      null,
+      async (req: Request<{ id: string; tokenId: string }>, res) => {
+        const token = await tokenRepo.findById(req.params.tokenId);
+        if (!token) {
+          return sendNotFound(res, "Token", req, AuditApiAction.TOKEN_REVOKE, {
+            tokenId: req.params.tokenId,
+          });
+        }
 
-      if (!token) {
-        auditApiLogSession({
-          action: AuditApiAction.TOKEN_REVOKE,
-          success: false,
-          errorMessage: "Token not found",
-          details: { bundleId: req.params.id, tokenId: req.params.tokenId }
-        });
-        res.status(404).json({ error: 'Token not found' });
-        return;
-      }
+        if (token.bundleId !== req.params.id) {
+          return sendForbidden(
+            res,
+            req,
+            AuditApiAction.TOKEN_REVOKE,
+            "Token does not belong to this bundle",
+            { tokenId: req.params.tokenId }
+          );
+        }
 
-      if (token.bundleId !== req.params.id) {
-        auditApiLogSession({
-          action: AuditApiAction.TOKEN_REVOKE,
-          success: false,
-          errorMessage: "Token does not belong to this bundle",
-          details: { bundleId: req.params.id, tokenId: req.params.tokenId, actualBundleId: token.bundleId }
-        });
-        res.status(403).json({ error: "Token does not belong to this bundle" });
-        return;
-      }
+        await tokenRepo.delete(req.params.tokenId);
+        logger.info({ tokenId: req.params.tokenId }, "Revoked token");
 
-      await tokenRepo.delete(req.params.tokenId);
-
-      auditApiLogSession({
+        return sent();
+      },
+      {
         action: AuditApiAction.TOKEN_REVOKE,
-        success: true,
-        details: {
+        successStatus: 204,
+        errorMessage: "Failed to revoke token",
+        getAuditDetails: (req) => ({
           bundleId: req.params.id,
           tokenId: req.params.tokenId,
-          tokenName: token.name
-        }
-      });
-
-      logger.info(
-        { bundleId: req.params.id, tokenId: req.params.tokenId },
-        "Deleted bundle token"
-      );
-
-      res.status(204).send({ id: token.id });
-    } catch (error: any) {
-      auditApiLogSession({
-        action: AuditApiAction.TOKEN_REVOKE,
-        success: false,
-        errorMessage: error.message,
-        details: { bundleId: req.params.id, tokenId: req.params.tokenId }
-      });
-      logger.error({ error: error.issues.message }, 'Failed to delete token');
-      res.status(500).json({ error: 'Failed to delete token' });
-    }
-  });
+        }),
+      }
+    )
+  );
 
   return router;
 }

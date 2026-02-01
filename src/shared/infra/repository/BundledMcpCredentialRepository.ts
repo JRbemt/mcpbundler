@@ -52,26 +52,23 @@ export class BundledMcpCredentialRepository implements Repository<BundledMCPCred
     });
   }
 
-  public decryptAuth(item: BundledMCPCredential): Omit<BundledMCPCredential, "authConfig"> & { authConfig: MCPAuthConfig } {
-    if (!item.authConfig) {
-      return {
-        ...item,
-        authConfig: MCPAuthConfigSchema.parse({ method: "none" }),
-      };
+  public decryptAuth(config: string): MCPAuthConfig {
+    if (!config) {
+      return MCPAuthConfigSchema.parse({ method: "none" });
     }
 
     try {
-      const decrypted = decryptJSON(item.authConfig);
-      return { ...item, authConfig: MCPAuthConfigSchema.parse(decrypted) };
+      const decrypted = decryptJSON(config);
+      return MCPAuthConfigSchema.parse(decrypted);
     } catch (error) {
-      logger.error({ credentialId: item.id, error }, "Failed to decrypt auth config");
+      logger.error("Failed to decrypt auth config");
     }
 
-    return { ...item, authConfig: MCPAuthConfigSchema.parse({ method: "none" }) };
+    return MCPAuthConfigSchema.parse({ method: "none" });
   }
 
-  public encryptAuth(item: Omit<BundledMCPCredential, "authConfig"> & { authConfig: MCPAuthConfig }): BundledMCPCredential {
-    return { ...item, authConfig: encryptJSON(item.authConfig) };
+  public encryptAuth(config: MCPAuthConfig): string {
+    return encryptJSON(config);
   }
 
   async delete(id: string): Promise<void> {
@@ -120,5 +117,75 @@ export class BundledMcpCredentialRepository implements Repository<BundledMCPCred
 
   async exists(id: string): Promise<boolean> {
     return await this.findById(id) !== null;
+  }
+
+  /**
+   * Find credential by token and MCP
+   *
+   * @param tokenId - UUID of the token
+   * @param mcpId - UUID of the MCP
+   * @returns Credential if found, null otherwise
+   */
+  async findByTokenAndMcp(tokenId: string, mcpId: string): Promise<BundledMCPCredential | null> {
+    return await this.prisma.bundledMCPCredential.findFirst({
+      where: { tokenId, mcpId },
+    });
+  }
+
+  /**
+   * Bind credentials to a token+MCP combination
+   *
+   * @param tokenId - UUID of the token
+   * @param mcpId - UUID of the MCP
+   * @param authConfig - Authentication configuration to encrypt and store
+   * @returns Created credential record
+   */
+  async bind(tokenId: string, mcpId: string, authConfig: MCPAuthConfig): Promise<BundledMCPCredential> {
+    const encryptedAuth = encryptJSON(authConfig);
+    const record = await this.prisma.bundledMCPCredential.create({
+      data: {
+        tokenId,
+        mcpId,
+        authConfig: encryptedAuth,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+    return record;
+  }
+
+  /**
+   * Update credentials for a token+MCP combination
+   *
+   * @param tokenId - UUID of the token
+   * @param mcpId - UUID of the MCP
+   * @param authConfig - New authentication configuration
+   * @returns Updated credential record
+   */
+  async updateByTokenAndMcp(tokenId: string, mcpId: string, authConfig: MCPAuthConfig): Promise<BundledMCPCredential> {
+    const encryptedAuth = encryptJSON(authConfig);
+    const existing = await this.findByTokenAndMcp(tokenId, mcpId);
+    if (!existing) {
+      throw new Error(`Credential not found for token ${tokenId} and MCP ${mcpId}`);
+    }
+    return await this.prisma.bundledMCPCredential.update({
+      where: { id: existing.id },
+      data: { authConfig: encryptedAuth, updatedAt: new Date() },
+    });
+  }
+
+  /**
+   * Remove credentials for a token+MCP combination
+   *
+   * @param tokenId - UUID of the token
+   * @param mcpId - UUID of the MCP
+   */
+  async remove(tokenId: string, mcpId: string): Promise<void> {
+    const existing = await this.findByTokenAndMcp(tokenId, mcpId);
+    if (existing) {
+      await this.prisma.bundledMCPCredential.delete({
+        where: { id: existing.id },
+      });
+    }
   }
 }

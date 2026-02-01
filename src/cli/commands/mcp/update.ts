@@ -1,5 +1,5 @@
+import { MCPAuthConfig } from "../../../shared/domain/entities.js";
 import { BundlerAPIClient } from "../../utils/api-client.js";
-import { MCPAuthConfig } from "../../../core/config/schemas.js";
 import { banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface UpdateOptions {

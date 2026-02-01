@@ -17,7 +17,7 @@
 import { PrismaClient, PermissionType, Prisma } from "@prisma/client";
 import { Repository } from "../../domain/Repository.js";
 import { ApiUser, CreatedApiUser } from "../../domain/entities.js";
-import { generateApiKey, hashApiKey } from "../../utils/encryption.js";
+import { generateApiKey, encrypt } from "../../utils/encryption.js";
 import logger from "../../utils/logger.js";
 
 
@@ -31,7 +31,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
 
   async create(item: Omit<ApiUser, "id" | "createdAt" | "updatedAt">): Promise<{ record: ApiUser, token: string }> {
     const plaintextKey = generateApiKey();
-    const token = hashApiKey(plaintextKey);
+    const token = encrypt(plaintextKey);
 
     const record = await this.client.apiUser.create({
       data: { ...item, keyHash: token, createdAt: new Date(), updatedAt: new Date() },
@@ -57,7 +57,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
    * @returns API user record if valid, null if not found or revoked
    */
   async validateAndUpdate(plaintextKey: string): Promise<CreatedApiUser | null> {
-    const keyHash = hashApiKey(plaintextKey);
+    const keyHash = encrypt(plaintextKey);
     const record = await this.findByHash(keyHash);
 
     if (!record) {
@@ -422,16 +422,16 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
    * @returns Object containing the API user record (with permissions) and plaintext key
    */
   async createWithPermissions(
-    item: Omit<ApiUser, "id" | "createdAt" | "updatedAt" | "lastUsedAt">,
+    item: Omit<ApiUser, "id" | "createdAt" | "updatedAt" | "lastUsedAt" | "keyHash">,
     permissions: PermissionType[]
-  ): Promise<{ record: CreatedApiUser, token: string }> {
-    const token = generateApiKey();
-    const tokenHash = hashApiKey(token);
+  ): Promise<{ record: CreatedApiUser, key: string }> {
+    const key = generateApiKey();
+    const keyHash = encrypt(key);
 
     const record = await this.client.apiUser.create({
       data: {
         ...item,
-        keyHash: tokenHash,
+        keyHash: keyHash,
         permissions: {
           create: Array.from(permissions, permission => ({ permission })),
         },
@@ -450,7 +450,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
 
     return {
       record,
-      token,
+      key,
     };
   }
 
@@ -523,5 +523,77 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
     });
   }
 
+  /**
+   * Get users created by a specific user (with permissions)
+   *
+   * @param creatorId - UUID of the creator user
+   * @returns Array of users with permissions created by this user
+   */
+  async getCreatedUsers(creatorId: string): Promise<CreatedApiUser[]> {
+    return await this.client.apiUser.findMany({
+      where: {
+        createdById: creatorId,
+      },
+      include: {
+        permissions: true,
+        createdBy: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+  }
 
+  /**
+   * Get non-revoked users created by a specific user
+   *
+   * @param creatorId - UUID of the creator user
+   * @returns Array of non-revoked users created by this user
+   */
+  async getNonRevokedCreatedUsers(creatorId: string): Promise<Array<{ id: string; name: string }>> {
+    return await this.client.apiUser.findMany({
+      where: {
+        createdById: creatorId,
+        revokedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+  }
+
+  /**
+   * List all users
+   *
+   * @param options - Options for filtering (includeRevoked)
+   * @returns Array of all users with permissions
+   */
+  async list(options?: { includeRevoked?: boolean }): Promise<CreatedApiUser[]> {
+    const where = options?.includeRevoked ? {} : { revokedAt: null };
+    return await this.client.apiUser.findMany({
+      where,
+      include: {
+        permissions: true,
+        createdBy: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  /**
+   * Revoke a user (soft delete)
+   *
+   * @param id - UUID of the user to revoke
+   * @returns The revoked user
+   */
+  async revoke(id: string): Promise<ApiUser> {
+    const user = await this.client.apiUser.update({
+      where: { id },
+      data: { revokedAt: new Date() },
+    });
+    logger.info({ apiKeyId: id, name: user.name }, "Revoked API key");
+    return user;
+  }
 }

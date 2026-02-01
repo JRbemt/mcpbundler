@@ -19,55 +19,40 @@
 
 import express, { Request, Response, Router } from "express";
 import { PrismaClient, PermissionType } from "@prisma/client";
-import logger from "../../utils/logger.js";
-import { McpRepository, ApiUserRepository } from "../database/repositories/index.js";
+import { McpRepository, ApiUserRepository } from "../../shared/infra/repository/index.js";
+import { encryptJSON } from "../../shared/utils/encryption.js";
 import { hasPermission } from "../middleware/auth.js";
-import { auditApiLog, AuditApiAction } from "../../utils/audit-log.js";
-import { z } from "zod";
-import { sendZodError } from "./utils/error-formatter.js";
-import { MCPAuthConfigSchema, AuthStrategySchema } from "../../core/config/schemas.js";
+import { asyncHandler, sendNotFound, sendForbidden, validatedHandler, sent } from "./utils/route-utils.js";
 import { ErrorResponse } from "./utils/schemas.js";
+import {
+  // Request schemas
+  CreateMcpRequestSchema,
+  UpdateMcpRequestSchema,
+  // Response types
+  McpResponse,
+  BulkDeleteResponse,
+  CreateMcpRequest,
+  UpdateMcpRequest,
+  // Transformers
+  transformMcpResponse,
+  transformMcpListResponse,
+  transformBulkDeleteResponse,
+  // Re-export MCPResponseSchema for other modules
+  MCPResponseSchema,
+} from "./utils/mcp-transformers.js";
+import { AuditApiAction } from "../../shared/utils/audit-log.js";
+import logger from "../../shared/utils/logger.js";
 
-/**
- * Request/Response schemas for MCP endpoints
- */
-
-const CreateMcpRequestSchema = z.object({
-  namespace: z.string()
-    .min(1)
-    .regex(/^(?!.*__)([A-Za-z0-9_.-]+)$/, "Namespace must contain only letters, digits, underscores, dots, and hyphens (no consecutive underscores)"),
-  url: z.url(),
-  description: z.string().min(1),
-  version: z.string().min(1).default("1.0.0"),
-  stateless: z.boolean().default(false),
-  authStrategy: AuthStrategySchema.default("NONE"),
-  masterAuth: MCPAuthConfigSchema.optional()
-});
-
-export const MCPResponseSchema = CreateMcpRequestSchema.extend({
-  id: z.string(),
-  createdAt: z.date(),
-  updatedAt: z.date(),
-  createdBy: z.object({
-    id: z.string(),
-    name: z.string(),
-  }).optional(),
-}).omit({
-  masterAuth: true,
-});
-
-const UpdateMcpRequestSchema = CreateMcpRequestSchema.partial().omit({ namespace: true });
-
-const BulkDeleteResponseSchema = z.object({
-  deleted: z.number(),
-  mcps: z.array(z.string()),
-});
-
-
-export type CreateMcpRequest = z.infer<typeof CreateMcpRequestSchema>;
-export type UpdateMcpRequest = z.infer<typeof UpdateMcpRequestSchema>;
-export type McpResponse = z.infer<typeof MCPResponseSchema>;
-export type BulkDeleteResponse = z.infer<typeof BulkDeleteResponseSchema>;
+// Re-export types and schemas for backwards compatibility
+export {
+  MCPResponseSchema,
+};
+export type {
+  CreateMcpRequest,
+  UpdateMcpRequest,
+  McpResponse,
+  BulkDeleteResponse,
+};
 
 export function createMcpRoutes(prisma: PrismaClient): Router {
   const router = express.Router();
@@ -78,288 +63,233 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
    * GET /api/mcps
    * List all MCPs
    */
-  router.get('/', async (req: Request, res: Response<McpResponse[] | ErrorResponse>): Promise<void> => {
-    try {
-      const mcps = await mcpRepo.listAll();
-
-      auditApiLog({
+  router.get(
+    "/",
+    asyncHandler(
+      MCPResponseSchema.array(),
+      async () => {
+        const mcps = await mcpRepo.listAll();
+        return transformMcpListResponse(mcps);
+      },
+      {
         action: AuditApiAction.MCP_VIEW,
-        success: true,
-        details: { count: mcps.length },
-      }, req);
-
-      res.json(mcps.map((m) => MCPResponseSchema.strip().parse(m)));
-    } catch (error: any) {
-      auditApiLog({
-        action: AuditApiAction.MCP_VIEW,
-        success: false,
-        errorMessage: error.message,
-      }, req);
-
-      logger.error({ error: error.message }, 'Failed to list MCPs');
-      res.status(500).json({ error: 'Failed to list MCPs' });
-    }
-  });
-
+        errorMessage: "Failed to list MCPs",
+        getAuditDetails: (_req, result) => ({
+          count: result?.length,
+        }),
+      }
+    )
+  );
 
   /**
    * POST /api/mcps
    * Add a new MCP (requires ADD_MCP permission)
    */
-  router.post('/', async (req: Request<{}, McpResponse | ErrorResponse, CreateMcpRequest>, res: Response<McpResponse | ErrorResponse>): Promise<void> => {
-    if (!hasPermission(req, PermissionType.ADD_MCP)) {
-      auditApiLog({
-        action: AuditApiAction.AUTH_FAILURE,
-        success: false,
-        errorMessage: 'Insufficient permissions to add MCP',
-      }, req);
+  router.post(
+    "/",
+    ...validatedHandler(
+      CreateMcpRequestSchema,
+      MCPResponseSchema,
+      async (req: Request, _res, data: CreateMcpRequest) => {
+        if (!hasPermission(req, PermissionType.ADD_MCP)) {
+          return sendForbidden(
+            _res,
+            req,
+            AuditApiAction.MCP_CREATE,
+            "ADD_MCP permission required"
+          );
+        }
 
-      res.status(403).json({
-        error: 'Insufficient permissions',
-        message: 'ADD_MCP permission required',
-      });
-      return;
-    }
+        const existing = await mcpRepo.findByNamespace(data.namespace);
+        if (existing) {
+          throw Object.assign(new Error("MCP with this namespace already exists"), { status: 409 });
+        }
 
-    try {
-      const data = CreateMcpRequestSchema.parse(req.body);
-      console.log(data);
-      // Check if namespace already exists
-      const existing = await mcpRepo.findByNamespace(data.namespace);
-      if (existing) {
-        res.status(409).json({ error: 'MCP with this namespace already exists' });
-        return;
-      }
-      const mcp = await mcpRepo.create(
-        data,
-        req.apiAuth!.userId
-      );
+        const { masterAuth, ...mcpData } = data;
+        const encryptedAuth = masterAuth ? encryptJSON(masterAuth) : null;
 
-      auditApiLog({
+        const { record: mcp } = await mcpRepo.create({
+          ...mcpData,
+          createdById: req.apiAuth!.userId,
+          masterAuth: encryptedAuth,
+        });
+
+        logger.info({ mcpId: mcp.id, namespace: mcp.namespace }, "Added MCP");
+
+        return transformMcpResponse(mcp);
+      },
+      {
         action: AuditApiAction.MCP_CREATE,
-        success: true,
-        details: { mcpId: mcp.id, namespace: mcp.namespace },
-      }, req);
-
-      logger.info({ mcpId: mcp.id, namespace: mcp.namespace }, 'Added MCP');
-
-      res.status(201).json(MCPResponseSchema.strip().parse(mcp));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        logger.error({
-          endpoint: 'POST /api/mcps',
-          error: error.issues,
-          receivedData: req.body,
-        }, 'Validation failed: missing or invalid parameters');
-        sendZodError(res, error, "Invalid MCP data");
-        return;
+        successStatus: 201,
+        errorMessage: "Failed to add MCP",
+        getAuditDetails: (_req, result) => ({
+          mcpId: result?.id,
+          namespace: result?.namespace,
+        }),
       }
-
-      logger.error({ error: error.message }, 'Failed to add MCP');
-      res.status(500).json({ error: 'Failed to add MCP' });
-    }
-  });
+    )
+  );
 
   /**
    * PUT /api/mcps/:namespace
-   * Update a MCP by namespace (requires hierarchical ownership)
+   * Update MCP by namespace
    */
-  router.put('/:namespace', async (req: Request<{ namespace: string }, McpResponse | ErrorResponse, UpdateMcpRequest>, res: Response<McpResponse | ErrorResponse>): Promise<void> => {
-    try {
-      const existing = await mcpRepo.findByNamespace(req.params.namespace);
-      if (!existing) {
-        auditApiLog({
-          action: AuditApiAction.MCP_UPDATE,
-          success: false,
-          errorMessage: 'MCP not found',
-          details: { namespace: req.params.namespace },
-        }, req);
+  router.put(
+    "/:namespace",
+    ...validatedHandler(
+      UpdateMcpRequestSchema,
+      MCPResponseSchema,
+      async (req: Request<{ namespace: string }>, res, data: UpdateMcpRequest) => {
+        const existing = await mcpRepo.findByNamespace(req.params.namespace);
+        if (!existing) {
+          return sendNotFound(res, "MCP", req, AuditApiAction.MCP_UPDATE, {
+            namespace: req.params.namespace,
+          });
+        }
 
-        res.status(404).json({ error: 'MCP not found' });
-        return;
-      }
+        if (!(await userRepo.isAuthorized(req.apiAuth!.userId, existing))) {
+          return sendForbidden(
+            res,
+            req,
+            AuditApiAction.MCP_UPDATE,
+            "You can only update MCPs you created or that were created by users you created",
+            { namespace: req.params.namespace }
+          );
+        }
 
-      if (!(await userRepo.isAuthorized(req.apiAuth!.userId, existing))) {
-        auditApiLog({
-          action: AuditApiAction.AUTH_FAILURE,
-          success: false,
-          errorMessage: 'Insufficient permissions to update MCP',
-          details: { namespace: req.params.namespace },
-        }, req);
+        const { masterAuth, ...updateData } = data;
+        const encryptedAuth =
+          masterAuth !== undefined ? encryptJSON(masterAuth) : undefined;
 
-        res.status(403).json({
-          error: 'Forbidden',
-          message: 'You can only update MCPs you created or that were created by users you created',
+        const updated = await mcpRepo.update({
+          id: existing.id,
+          ...updateData,
+          ...(encryptedAuth !== undefined && { masterAuth: encryptedAuth }),
         });
-        return;
-      }
 
-      const data = UpdateMcpRequestSchema.parse(req.body);
-      const updated = await mcpRepo.update(existing.id, data);
+        logger.info({ namespace: req.params.namespace }, "Updated MCP");
 
-      auditApiLog({
+        return transformMcpResponse(updated);
+      },
+      {
         action: AuditApiAction.MCP_UPDATE,
-        success: true,
-        details: { mcpId: updated.id, namespace: updated.namespace },
-      }, req);
-
-      logger.info({ namespace: req.params.namespace }, 'Updated MCP');
-
-      res.json(MCPResponseSchema.strip().parse(updated));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        auditApiLog({
-          action: AuditApiAction.MCP_UPDATE,
-          success: false,
-          errorMessage: 'Validation error',
-          details: { namespace: req.params.namespace },
-        }, req);
-
-        logger.error({
-          endpoint: 'PUT /api/mcps/:namespace',
+        errorMessage: "Failed to update MCP",
+        getAuditDetails: (req, result) => ({
           namespace: req.params.namespace,
-          error: error.issues,
-          receivedData: req.body,
-        }, 'Validation failed: missing or invalid parameters');
-        sendZodError(res, error, "Invalid MCP data");
-        return;
+          mcpId: result?.id,
+        }),
       }
+    )
+  );
 
-      auditApiLog({
-        action: AuditApiAction.MCP_UPDATE,
-        success: false,
-        errorMessage: error.message,
-        details: { namespace: req.params.namespace },
-      }, req);
-
-      logger.error({ error: error.message }, 'Failed to update MCP');
-      res.status(500).json({ error: 'Failed to update MCP' });
-    }
-  });
 
   /**
    * DELETE /api/mcps/all
-   * Bulk delete all MCPs created by authenticated user and their descendants
-   *
-   * NOTE: This only deletes MCP records, not user accounts. Users remain untouched.
+   * Bulk delete MCPs created by user and descendants
    */
-  router.delete('/all', async (req: Request, res: Response<BulkDeleteResponse | ErrorResponse>): Promise<void> => {
-    try {
-      // Collect IDs of users whose MCPs should be deleted
-      const descendantIds = await userRepo.collectDescendantIds(req.apiAuth!.userId);
-      const allUserIds = [req.apiAuth!.userId, ...descendantIds];
+  router.delete(
+    "/all",
+    asyncHandler(
+      null,
+      async (req) => {
+        const descendantIds = await userRepo.collectDescendantIds(req.apiAuth!.userId);
+        const allUserIds = [req.apiAuth!.userId, ...descendantIds];
 
-      // Find all MCPs created by authenticated user and their descendants
-      const userMcps = await mcpRepo.findByCreators(allUserIds);
-      const namespaces = userMcps.map(m => m.namespace);
+        const mcps = await mcpRepo.findByCreators(allUserIds);
+        const namespaces = mcps.map((m) => m.namespace);
 
-      // Delete all MCPs (users are NOT deleted, only MCP records)
-      await mcpRepo.deleteByCreators(allUserIds);
+        await mcpRepo.deleteByCreators(allUserIds);
 
-      auditApiLog({
+        logger.info(
+          { userId: req.apiAuth!.userId, count: mcps.length },
+          "Bulk deleted MCPs"
+        );
+
+        return transformBulkDeleteResponse(mcps.length, namespaces);
+      },
+      {
         action: AuditApiAction.MCP_DELETE,
-        success: true,
-        details: { count: userMcps.length, namespaces },
-      }, req);
-
-      logger.info(
-        { userId: req.apiAuth!.userId, count: userMcps.length },
-        'Bulk deleted MCPs (hierarchical)'
-      );
-
-      res.json({
-        deleted: userMcps.length,
-        mcps: namespaces
-      });
-    } catch (error: any) {
-      logger.error({ error: error.message, userId: req.apiAuth!.userId }, 'Failed to bulk delete MCPs');
-      res.status(500).json({ error: 'Failed to bulk delete MCPs' });
-    }
-  });
-
+        errorMessage: "Failed to bulk delete MCPs",
+        getAuditDetails: (_req, result: BulkDeleteResponse | undefined) => ({
+          count: result?.count,
+          namespaces: result?.mcps,
+        }),
+      }
+    )
+  );
   /**
    * GET /api/mcps/:namespace
    * Get MCP by namespace
    */
-  router.get('/:namespace', async (req: Request<{ namespace: string }>, res: Response<McpResponse | ErrorResponse>): Promise<void> => {
-    try {
-      const mcp = await mcpRepo.findByNamespace(req.params.namespace);
+  router.get(
+    "/:namespace",
+    asyncHandler(
+      MCPResponseSchema,
+      async (req: Request<{ namespace: string }>, res) => {
+        const mcp = await mcpRepo.findByNamespace(req.params.namespace);
+        if (!mcp) {
+          return sendNotFound(res, "MCP", req, AuditApiAction.MCP_VIEW, {
+            namespace: req.params.namespace,
+          });
+        }
 
-      if (!mcp) {
-        auditApiLog({
-          action: AuditApiAction.MCP_VIEW,
-          success: false,
-          errorMessage: 'MCP not found',
-          details: { namespace: req.params.namespace },
-        }, req);
-
-        res.status(404).json({ error: 'MCP not found' });
-        return;
+        return transformMcpResponse(mcp);
+      },
+      {
+        action: AuditApiAction.MCP_VIEW,
+        errorMessage: "Failed to get MCP",
+        getAuditDetails: (_req, result) => ({
+          mcpId: result?.id,
+          namespace: result?.namespace,
+        }),
       }
-
-      auditApiLog({
-        action: AuditApiAction.MCP_VIEW,
-        success: true,
-        details: { mcpId: mcp.id, namespace: mcp.namespace },
-      }, req);
-
-      res.json(MCPResponseSchema.strip().parse(mcp));
-    } catch (error: any) {
-      auditApiLog({
-        action: AuditApiAction.MCP_VIEW,
-        success: false,
-        errorMessage: error.message,
-        details: { namespace: req.params.namespace },
-      }, req);
-
-      logger.error({ error: error.message, namespace: req.params.namespace }, 'Failed to get MCP by namespace');
-      res.status(500).json({ error: 'Failed to get MCP' });
-    }
-  });
+    )
+  );
 
   /**
-   * DELETE /api/mcps/:namespace
-   * Delete a MCP (cascades to all bundle instances)
-   */
-  router.delete('/:namespace', async (req: Request<{ namespace: string }>, res: Response<ErrorResponse | void>): Promise<void> => {
-    try {
-      const mcp = await mcpRepo.findByNamespace(req.params.namespace);
+    * DELETE /api/mcps/:namespace
+    */
+  router.delete(
+    "/:namespace",
+    asyncHandler(
+      null,
+      async (req: Request<{ namespace: string }>, res) => {
+        const mcp = await mcpRepo.findByNamespace(req.params.namespace);
+        if (!mcp) {
+          return sendNotFound(res, "MCP", req, AuditApiAction.MCP_DELETE, {
+            namespace: req.params.namespace,
+          });
+        }
 
-      if (!mcp) {
-        res.status(404).json({ error: 'MCP not found' });
-        return;
-      }
+        if (!(await userRepo.isAuthorized(req.apiAuth!.userId, mcp))) {
+          return sendForbidden(
+            res,
+            req,
+            AuditApiAction.MCP_DELETE,
+            "You can only delete MCPs you created or that were created by users you created",
+            { namespace: req.params.namespace }
+          );
+        }
 
-      if (!(await userRepo.isAuthorized(req.apiAuth!.userId, mcp))) {
-        auditApiLog({
-          action: AuditApiAction.AUTH_FAILURE,
-          success: false,
-          errorMessage: 'Insufficient permissions to delete MCP',
-        }, req);
+        await mcpRepo.delete(mcp.id);
 
-        res.status(403).json({
-          error: 'Forbidden',
-          message: 'You can only delete MCPs you created or that were created by users you created',
-        });
-        return;
-      }
+        logger.info(
+          { namespace: req.params.namespace, userId: req.apiAuth!.userId },
+          "Deleted MCP"
+        );
 
-      await mcpRepo.delete(req.params.namespace);
-
-      auditApiLog({
+        return sent();
+      },
+      {
         action: AuditApiAction.MCP_DELETE,
-        success: true,
-        details: { namespace: req.params.namespace },
-      }, req);
-
-      logger.info({ namespace: req.params.namespace, userId: req.apiAuth!.userId }, 'Deleted MCP');
-
-      res.status(204).send();
-    } catch (error: any) {
-      logger.error({ error: error.message, namespace: req.params.namespace }, 'Failed to delete MCP');
-      res.status(500).json({ error: 'Failed to delete MCP' });
-    }
-  });
+        successStatus: 204,
+        errorMessage: "Failed to delete MCP",
+        getAuditDetails: (req) => ({
+          namespace: req.params.namespace,
+        }),
+      }
+    )
+  );
 
   return router;
 }

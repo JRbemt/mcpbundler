@@ -58,6 +58,7 @@ export enum AuditApiAction {
 
   // System operations
   WILDCARD_TOKEN_USED = "wildcard_token.used",
+  OTHER = "other"
 }
 
 export interface LogEntry {
@@ -170,5 +171,44 @@ export function auditBundlerLog(entry: AuditBundlerEntry): void {
     logger.warn(logEntry, `Bundler Audit: ${entry.action} - FAILED`);
   } else {
     logger.info(logEntry, `Bundler Audit: ${entry.action}`);
+  }
+}
+
+export type AuditDetails<T> =
+  | Record<string, unknown>
+  | ((ctx: { result?: T; error?: unknown }) => Record<string, unknown>);
+
+export async function withAudit<T>(args: {
+  fn: () => Promise<T>;
+  action: AuditBundlerAction;
+  sessionId: string;
+  details?: AuditDetails<T>;
+}): Promise<T> {
+  const resolveDetails = (ctx: { result?: T; error?: unknown }) =>
+    typeof args.details === "function"
+      ? args.details(ctx)
+      : args.details;
+
+  try {
+    const result = await args.fn();
+
+    auditBundlerLog({
+      action: args.action,
+      sessionId: args.sessionId,
+      success: true,
+      details: resolveDetails({ result }),
+    });
+
+    return result;
+  } catch (e) {
+    auditBundlerLog({
+      action: args.action,
+      sessionId: args.sessionId,
+      success: false,
+      errorMessage: e instanceof Error ? e.message : String(e),
+      details: resolveDetails({ error: e }),
+    });
+
+    throw e;
   }
 }

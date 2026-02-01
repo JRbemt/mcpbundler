@@ -147,13 +147,6 @@ export function generateApiKey(): string {
   return `${API_KEY_PREFIX}${randomHex}`;
 }
 
-/**
- * Hashes an API key for storage
- * Uses SHA-256 to hash the key
- */
-export function hashApiKey(apiKey: string): string {
-  return createHash('sha256').update(apiKey).digest('hex');
-}
 
 /**
  * Validates API key format

@@ -1,7 +1,6 @@
+import { MCPAuthConfig } from "../../../shared/domain/entities.js";
 import { BundlerAPIClient, Mcp } from "../../utils/api-client.js";
-import { MCPAuthConfig } from "../../../core/config/schemas.js";
 import { banner, BG_COLORS } from "../../utils/print-utils.js";
-import logger from "../../../utils/logger.js";
 import { canFetchMcp, fetchMcpCapabilities } from "./capabilities/fetch.js";
 
 interface AddManualOptions {
@@ -103,10 +102,10 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
     console.groupEnd()
     console.log()
 
-    const can_fetch_capbailities = canFetchMcp(mcp, authConfig)
+    const can_fetch_capbalities = canFetchMcp(mcp, authConfig)
 
     // Display overview
-    if (can_fetch_capbailities.canQuery) {
+    if (can_fetch_capbalities.canQuery) {
       const capabilities = await fetchMcpCapabilities(mcp, authConfig);
 
 
@@ -151,7 +150,7 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
           console.log(`   │ ${green}${"Name".padEnd(nameColWidth)}${reset} │ ${green}${"Description".padEnd(descColWidth)}${reset} │`);
           console.log(`   ├─${"─".repeat(nameColWidth)}─┼─${"─".repeat(descColWidth)}─┤`);
 
-          toolsToShow.forEach((tool, index) => {
+          toolsToShow.forEach((tool: { name: string, description?: string }, index: number) => {
             const nameLines = wrapText(tool.name, nameColWidth);
             const descLines = wrapText(tool.description || "-", descColWidth);
             const maxLines = Math.max(nameLines.length, descLines.length);
@@ -185,12 +184,12 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
         console.log(`Resources: ${capabilities.resources.length}`);
         console.log(`Prompts: ${capabilities.prompts.length}`);
       } else {
-        banner(" Failed to fetch capabilities ", { bg: BG_COLORS.YELLOW });
-        console.log("   " + can_fetch_capbailities.reason);
+        banner(" Failed to fetch capabilities ", { bg: BG_COLORS.MAGENTA });
+        console.log("   " + can_fetch_capbalities.reason);
       }
     } else {
-      banner(" Fetching MCP capabilities not possible ", { bg: BG_COLORS.YELLOW });
-      console.log("   " + can_fetch_capbailities.reason);
+      banner(" Fetching MCP capabilities not possible ", { bg: BG_COLORS.MAGENTA });
+      console.log("   " + can_fetch_capbalities.reason);
     }
     console.log();
 

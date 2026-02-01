@@ -26,7 +26,7 @@ program
   .name("mcpbundler")
   .description(pckg.description)
   .version(pckg.version)
-  .option("-h, --host [host]", "server adress of the mcpbundler API", "http://0.0.0.0:3000")
+  .option("-h, --host [host]", "server adress of the mcpbundler API", "http://0.0.0.0:3997")
   .option("-t, --token [token]", "user token for API authentication (mcpb_*)")
   .showHelpAfterError()
   .showSuggestionAfterError();
@@ -37,8 +37,8 @@ program.addCommand(createBundlesCommand());
 program.addCommand(createUserCommand());
 program.command("stdio")
   .description("connect to bundler and expose as an STDIO Server for local integrations")
-  .option("-b, --bundle <token>", "Bundle-token (default: '')", "")
-  .option("--name <name>", "Server name (default: 'mcpbundler-client')", "mcpbundler-client")
+  .option("-b, --bundle <token>", "Bundle-token", "")
+  .option("--name <name>", "Server name", "mcpbundler-client")
 
   .action((options, cmd) => {
     toStdioCommand(cmd.optsWithGlobals());

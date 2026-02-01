@@ -1,5 +1,5 @@
+import { MCPAuthConfig } from "../../../../../shared/domain/entities.js";
 import { BundlerAPIClient } from "../../../../utils/api-client.js";
-import { MCPAuthConfig } from "../../../../../core/config/schemas.js";
 import { banner, BG_COLORS } from "../../../../utils/print-utils.js";
 
 interface BindCredentialOptions {
@@ -71,7 +71,7 @@ export async function bindCredentialCommand(
             "Credential ID": result.credentialId,
             "MCP Namespace": result.mcpNamespace,
             "Auth Method": authConfig!.method,
-            "Created": new Date(result.createdAt).toLocaleString(),
+            "Created": result.createdAt,
         }];
 
         console.table(tableData);

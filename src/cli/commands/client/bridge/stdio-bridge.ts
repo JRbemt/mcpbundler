@@ -25,7 +25,7 @@ import {
   ResourceListChangedNotificationSchema,
   PromptListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import logger from "../../../../utils/logger.js";
+import logger from "../../../../shared/utils/logger.js";
 
 export interface BridgeConfig {
   /** Bundler SSE endpoint URL (e.g., http://localhost:3000) */

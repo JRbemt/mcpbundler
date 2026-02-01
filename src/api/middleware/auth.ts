@@ -29,11 +29,11 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { PrismaClient, PermissionType } from '@prisma/client';
-import { ApiUserRepository } from '../database/repositories/ApiUserRepository.js';
-import logger from '../../utils/logger.js';
-import { auditApiLog, AuditApiAction } from '../../utils/audit-log.js';
-import { API_KEY_PREFIX } from '../../core/auth/encryption.js';
+import { ApiUserRepository } from '../../shared/infra/repository/index.js';
+import { auditApiLog, AuditApiAction } from '../../shared/utils/audit-log.js';
+import { API_KEY_PREFIX } from '../../bundler/core/auth/encryption.js';
 import { AsyncLocalStorage } from 'async_hooks';
+import logger from '../../shared/utils/logger.js';
 
 /**
  * AsyncLocalStorage for request context propagation

@@ -9,7 +9,6 @@ import type {
   BundleResponse,
 } from "../../api/routes/bundles.js";
 import type {
-  BindCredentialRequest as ApiBindCredentialRequest,
   CredentialResponse,
   CredentialListItem,
 } from "../../api/routes/credentials.js";
@@ -29,7 +28,7 @@ import type {
   UserPermissionsResponse,
   ChangePermissionResponse,
 } from "../../api/routes/permissions.js";
-import type { MCPAuthConfig } from "../../core/config/schemas.js";
+import { MCPAuthConfig } from "../../shared/domain/entities.js";
 
 // Re-exported types from API routes
 export type Mcp = McpResponse;
@@ -47,7 +46,6 @@ export { AddMcpsByNamespaceRequest };
 
 // Re-export credential API types for CLI use
 export type Credential = CredentialListItem;
-export type BindCredentialRequest = ApiBindCredentialRequest;
 export { CredentialResponse };
 
 export class BundlerAPIClient {
@@ -58,6 +56,7 @@ export class BundlerAPIClient {
     // Support both port number (localhost) and full URL (remote)
     this.baseUrl = portOrUrl;
 
+    console.log(`Creating client with: ${{ portOrUrl, token }}`)
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -335,7 +334,7 @@ export class BundlerAPIClient {
    * Get permissions for a specific user by ID
    */
   async getUserPermissions(userId: string): Promise<UserPermissionsResponse> {
-    const response = await this.client.get(`/api/permissions/by-id/${userId}`);
+    const response = await this.client.get(`/api/permissions/user-id/${userId}`);
     return response.data;
   }
 
@@ -343,7 +342,7 @@ export class BundlerAPIClient {
    * Add permission to user
    */
   async addPermission(userId: string, permissions: string[], propagate?: boolean): Promise<ChangePermissionResponse> {
-    const response = await this.client.post(`/api/permissions/by-id/${userId}/add`, {
+    const response = await this.client.post(`/api/permissions/user-id/${userId}/add`, {
       permissions: permissions,
       propagate: propagate || false,
     });
@@ -356,7 +355,7 @@ export class BundlerAPIClient {
    */
   async removePermission(userId: string, permissions: string[]): Promise<ChangePermissionResponse> {
     const response = await this.client.post(
-      `/api/permissions/by-id/${userId}/remove`,
+      `/api/permissions/user-id/${userId}/remove`,
       { permissions }
     );
     return response.data;
@@ -374,9 +373,11 @@ export class BundlerAPIClient {
    * Bind credentials for a bundle token + MCP namespace
    */
   async bindCredential(bundleToken: string, namespace: string, authConfig: MCPAuthConfig): Promise<CredentialResponse> {
-    const response = await this.client.post(`/api/tokens/${bundleToken}/mcps/${namespace}`, {
-      authConfig,
-    });
+    const response = await this.client.post(
+      `/api/credentials/${namespace}`,
+      { authConfig },
+      { headers: { "X-Bundle-Token": bundleToken } }
+    );
     return response.data;
   }
 
@@ -384,9 +385,11 @@ export class BundlerAPIClient {
    * Update credentials for a bundle token + MCP namespace
    */
   async updateCredential(bundleToken: string, namespace: string, authConfig: MCPAuthConfig): Promise<CredentialResponse> {
-    const response = await this.client.put(`/api/tokens/${bundleToken}/mcps/${namespace}`, {
-      authConfig,
-    });
+    const response = await this.client.put(
+      `/api/credentials/${namespace}`,
+      { authConfig },
+      { headers: { "X-Bundle-Token": bundleToken } }
+    );
     return response.data;
   }
 
@@ -394,14 +397,18 @@ export class BundlerAPIClient {
    * Remove credentials for a bundle token + MCP namespace
    */
   async removeCredential(bundleToken: string, namespace: string): Promise<void> {
-    await this.client.delete(`/api/tokens/${bundleToken}/mcps/${namespace}`);
+    await this.client.delete(`/api/credentials/${namespace}`, {
+      headers: { "X-Bundle-Token": bundleToken },
+    });
   }
 
   /**
    * List all credentials for a bundle token
    */
   async listCredentials(bundleToken: string): Promise<Credential[]> {
-    const response = await this.client.get(`/api/tokens/${bundleToken}/mcps`);
+    const response = await this.client.get("/api/credentials", {
+      headers: { "X-Bundle-Token": bundleToken },
+    });
     return response.data;
   }
 }

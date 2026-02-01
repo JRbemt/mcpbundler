@@ -64,14 +64,13 @@ export async function initializeSystemData(prisma: PrismaClient, config: SystemI
         logger.warn("No administrator found, creating root user");
 
         const userRepo = new ApiUserRepository(prisma);
-        const { record, token } = await userRepo.createWithPermissions({
+        const { record, key } = await userRepo.createWithPermissions({
             name: config.rootUser.name,
             contact: config.rootUser.email,
             isAdmin: true,
             department: "Administration",
-            keyHash: "",
             revokedAt: null,
-            createdById: null
+            createdById: null,
         }, Object.values(PermissionType));
 
         // Log to audit log
@@ -95,7 +94,7 @@ export async function initializeSystemData(prisma: PrismaClient, config: SystemI
         console.log("=".repeat(n_stripes));
         console.log(`Name:    ${record.name}`);
         console.log(`Contact: ${record.contact}`);
-        console.log(`API Key: ${token}`);
+        console.log(`API Key: ${key}`);
         console.log("=".repeat(n_stripes));
         console.log("IMPORTANT: Save this API key securely. It will not be shown again.");
         console.log("=".repeat(n_stripes) + "\n");

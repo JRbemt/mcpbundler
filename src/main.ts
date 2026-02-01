@@ -13,22 +13,22 @@ const output = config({
   quiet: true
 });
 
-import logger from "./utils/logger.js";
 logger.debug(`.ENV initialized: [${Object.keys(output.parsed ?? {}).join(", ")}]`)
 
 import express from "express";
-import { BundlerConfigSchema } from "./core/config/schemas.js";
-import { BundlerServer } from "./core/bundler.js";
-import { DBBundleResolver } from "./core/bundle-resolver.js";
+import { BundlerConfigSchema } from "./bundler/core/schemas.js";
+import { BundlerServer } from "./bundler/core/bundler.js";
+import { DBBundleResolver } from "./bundler/core/bundle-resolver.js";
 import { PrismaClient, PermissionType } from "@prisma/client";
 import { createBundleRoutes } from "./api/routes/bundles.js";
-import { createBundleTokenRoutes } from "./api/routes/credentials.js";
+import { createCredentialRoutes } from "./api/routes/credentials.js";
 import { createMcpRoutes } from "./api/routes/mcps.js";
 import { createUserRoutes } from "./api/routes/users.js";
 import { createPermissionRoutes } from "./api/routes/permissions.js";
-import { validateEncryptionKey } from "./core/auth/encryption.js";
+import { validateEncryptionKey } from "./bundler/core/auth/encryption.js";
 import { createAuthMiddleware } from "./api/middleware/auth.js";
-import { initializeSystemData, parsePermissions, SystemInitConfig } from "./utils/initialize-system.js";
+import { initializeSystemData, parsePermissions, SystemInitConfig } from "./shared/utils/initialize-db.js";
+import logger from "./shared/utils/logger.js";
 
 
 const CONFIG = {
@@ -38,7 +38,7 @@ const CONFIG = {
     host: "0.0.0.0",
     port: parseInt(process.env.PORT || "3000", 10),
     concurrency: {
-      max_sessions: 100,
+      max_concurrent: 100,
       idle_timeout_ms: 20 * 60 * 1000,
     }
   },
@@ -139,7 +139,7 @@ export async function main() {
     });
 
     apiRouter.use("/bundles", authMiddleware, createBundleRoutes(prisma));
-    apiRouter.use("/credentials", createBundleTokenRoutes(prisma));
+    apiRouter.use("/credentials", createCredentialRoutes(prisma));
     apiRouter.use("/mcps", authMiddleware, createMcpRoutes(prisma));
     apiRouter.use("/users", createUserRoutes(authMiddleware, prisma));
     apiRouter.use("/permissions", createPermissionRoutes(authMiddleware, prisma));

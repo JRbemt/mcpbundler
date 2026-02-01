@@ -18,9 +18,11 @@ export interface ApiUserRequest {
     createdById: string | null;
 }
 
-// Extend Express Request interface to include 'auth' (middleware)
+// Extend Express Request interface to include 'auth' (middleware) and validated body
 declare module "express-serve-static-core" {
     interface Request {
         apiAuth?: ApiUserRequest;
+        /** Validated request body from validateBody middleware */
+        validated?: unknown;
     }
 }

@@ -18,8 +18,8 @@
  * }
  */
 
+import logger from "../../../shared/utils/logger.js";
 import { StdioToSseBridge } from "./bridge/stdio-bridge.js";
-import logger from "../../../utils/logger.js";
 
 interface ClientConnectOptions {
   name: string;

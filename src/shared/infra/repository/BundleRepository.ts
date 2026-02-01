@@ -9,9 +9,22 @@
  */
 
 
+import { Prisma } from "@prisma/client";
 import { Repository } from "../../domain/Repository.js";
-import { Bundle, BundleWithMcpsAndCreator, McpPermissions, MCPBundleEntry, PrismaClient, CreatedBundle } from "../../domain/entities.js";
+import { Bundle, McpPermissions, MCPBundleEntry, PrismaClient, CreatedBundle } from "../../domain/entities.js";
 import logger from "../../utils/logger.js";
+
+export type BundleWithMcpsAndCreator = Prisma.BundleGetPayload<{
+  include: {
+    mcps: {
+      include: { mcp: true };
+    };
+    createdBy: {
+      select: { id: true, name: true };
+    };
+  };
+}>;
+
 
 export class BundleRepository implements Repository<Bundle, "id"> {
   public client: PrismaClient;
@@ -268,6 +281,24 @@ export class BundleRepository implements Repository<Bundle, "id"> {
   async deleteMcpById(id: string): Promise<void> {
     await this.client.mCPBundleEntry.delete({
       where: { id },
+    });
+  }
+
+  /**
+   * Find MCP entry in bundle
+   *
+   * @param bundleId - UUID of the bundle
+   * @param mcpId - UUID of the MCP
+   * @returns MCPBundleEntry if found, null otherwise
+   */
+  async findMcpInBundle(bundleId: string, mcpId: string): Promise<MCPBundleEntry | null> {
+    return await this.client.mCPBundleEntry.findUnique({
+      where: {
+        bundleId_mcpId: {
+          bundleId,
+          mcpId,
+        },
+      },
     });
   }
 }

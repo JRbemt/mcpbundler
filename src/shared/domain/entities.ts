@@ -52,22 +52,3 @@ export const McpPermissionsSchema = z.object({
     allowedPrompts: z.array(z.string()).default(["*"])
 });
 export type McpPermissions = z.infer<typeof McpPermissionsSchema>;
-
-export type BundleWithMcpsAndCreator = Prisma.BundleGetPayload<{
-    include: {
-        mcps: {
-            include: { mcp: true };
-        };
-        createdBy: {
-            select: { id: true, name: true };
-        };
-    };
-}>;
-
-export type DecryptedBundle = Omit<BundleWithMcpsAndCreator, "mcps"> & {
-    mcps: (Omit<BundleWithMcpsAndCreator["mcps"][number], "mcp"> & {
-        mcp: BundleWithMcpsAndCreator["mcps"][number]["mcp"] & {
-            auth?: MCPAuthConfig;
-        };
-    })[];
-}
