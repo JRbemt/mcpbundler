@@ -51,6 +51,12 @@ export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConn
       throw new Error("Connector not initialized with config");
     }
 
+    // Idempotent: if already connected, return early
+    if (this.connected && this.client && this.transport) {
+      logger.debug({ namespace: this.config.namespace }, "Already connected, skipping reconnect");
+      return;
+    }
+
     // SSRF Protection: Validate upstream URL
     const validationResult = validateUpstreamUrl(this.config.url, {
       allowPrivateIPs: process.env.NODE_ENV === "development", // Allow in dev, block in prod
@@ -144,18 +150,32 @@ export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConn
 
   async disconnect(): Promise<void> {
     this.stopHealthMonitoring();
+    this.connected = false;
 
     if (this.transport) {
       try {
-        await this.transport.close();
-        this.connected = false;
+        // Timeout disconnect to prevent hanging on unresponsive upstreams
+        const timeoutMs = 5000;
+        await Promise.race([
+          this.transport.close(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Disconnect timeout")), timeoutMs)
+          )
+        ]);
         logger.info({ namespace: this.config?.namespace }, "Upstream disconnected");
       } catch (error: any) {
-        logger.error(
-          { namespace: this.config?.namespace, error: error.message },
-          "Error during upstream disconnect"
-        );
+        // AbortError and timeout are expected when closing with pending operations
+        if (error.name === "AbortError" || error.message === "Disconnect timeout") {
+          logger.debug({ namespace: this.config?.namespace }, "Upstream disconnect completed (aborted or timed out)");
+        } else {
+          logger.error(
+            { namespace: this.config?.namespace, error: error.message },
+            "Error during upstream disconnect"
+          );
+        }
       }
+      this.transport = undefined;
+      this.client = undefined;
     }
   }
 

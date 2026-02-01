@@ -23,7 +23,6 @@ import { McpRepository, ApiUserRepository } from "../../shared/infra/repository/
 import { encryptJSON } from "../../shared/utils/encryption.js";
 import { hasPermission } from "../middleware/auth.js";
 import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler, sent } from "./utils/route-utils.js";
-import { ErrorResponse } from "./utils/schemas.js";
 import {
   CreateMcpRequestSchema,
   UpdateMcpRequestSchema,

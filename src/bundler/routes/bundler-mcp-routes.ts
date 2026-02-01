@@ -51,8 +51,8 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
 
   // Rate limiter for connection attempts
   const mcpLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // 10 connections per IP per window
+    windowMs: 1 * 60 * 1000, // 1 minutes
+    max: 100, // 10 connections per IP per window
     message: {
       jsonrpc: "2.0",
       error: { code: -32000, message: "Too many connection attempts, please try again later" },

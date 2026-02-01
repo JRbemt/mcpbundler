@@ -207,10 +207,12 @@ export class Session extends EventEmitter {
         }
 
         let connector: IUpstreamConnector;
+        let isFromPool = false;
 
         // Session controls pooling strategy
         if (config.stateless && this.connectionPool.has(config.namespace, config.url)) {
             connector = this.connectionPool.get(config.namespace, config.url)!;
+            isFromPool = true;
             logger.debug({ sessionId: this.id, namespace: config.namespace }, "Reusing stateless upstream from pool");
         } else {
             connector = await this.connectorFactory.createConnector(config, this.namespaceService, this.permissionService);
@@ -221,12 +223,17 @@ export class Session extends EventEmitter {
                 logger.debug({ sessionId: this.id, namespace: config.namespace }, "Created stateful upstream");
             }
         }
-        try {
-            const connectResult = await connector.connect();
-        } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            logger.error({ sessionId: this.id, namespace: config.namespace, error: errorMsg }, "Failed to connect to upstream");
 
+        // Only connect if not already connected (pooled connectors may already be connected)
+        if (!connector.isConnected()) {
+            try {
+                await connector.connect();
+            } catch (err) {
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                logger.error({ sessionId: this.id, namespace: config.namespace, error: errorMsg }, "Failed to connect to upstream");
+            }
+        } else if (isFromPool) {
+            logger.debug({ sessionId: this.id, namespace: config.namespace }, "Pooled connector already connected, skipping connect");
         }
 
         // Attach upstream to event coordinator for notification handling
