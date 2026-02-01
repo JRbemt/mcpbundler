@@ -55,7 +55,7 @@ export function validateBody<T>(schema: z.ZodType<T>): RequestHandler {
 }
 
 /**
- * Core response handler logic - shared by validatedHandler and asyncHandler
+ * Core response handler logic - shared by validatedBodyHandler and asyncHandler
  */
 async function handleResponse<TRes>(
   result: HandlerResult<TRes>,
@@ -105,7 +105,7 @@ async function handleResponse<TRes>(
  * @param handler - Handler returning response data (or sent() for early exit)
  * @param options - Audit action and other options
  */
-export function validatedHandler<TReq, TRes>(
+export function validatedBodyHandler<TReq, TRes>(
   requestSchema: z.ZodType<TReq>,
   responseSchema: z.ZodType<TRes> | null,
   handler: (req: Request<any, any, any>, res: Response<any>, data: TReq) => Promise<HandlerResult<TRes>>,
@@ -130,7 +130,7 @@ export function validatedHandler<TReq, TRes>(
  * Handler returns data (or uses sent() for early responses).
  * Use successStatus: 204 for DELETE endpoints (no response body).
  */
-export function asyncHandler<TRes>(
+export function validatedHandler<TRes>(
   responseSchema: z.ZodType<TRes> | null,
   handler: (req: Request<any, any, any>, res: Response<any>) => Promise<HandlerResult<TRes>>,
   options: HandlerOptions<TRes>
@@ -236,25 +236,6 @@ export function sendForbidden(
     error: "Forbidden",
     message: message ?? "You do not have permission to perform this action",
   });
-  return sent();
-}
-
-/**
- * Send 401 response and log audit failure
- */
-export function sendUnauthorized(
-  res: Response,
-  req: Request,
-  action: AuditApiAction,
-  details?: Record<string, unknown>
-): { __sent: true } {
-  auditApiLog({
-    action,
-    success: false,
-    errorMessage: "Unauthorized",
-    details,
-  }, req);
-  res.status(401).json({ error: "Invalid or expired token" });
   return sent();
 }
 

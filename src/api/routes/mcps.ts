@@ -22,24 +22,18 @@ import { PrismaClient, PermissionType } from "@prisma/client";
 import { McpRepository, ApiUserRepository } from "../../shared/infra/repository/index.js";
 import { encryptJSON } from "../../shared/utils/encryption.js";
 import { hasPermission } from "../middleware/auth.js";
-import { asyncHandler, sendNotFound, sendForbidden, validatedHandler, sent } from "./utils/route-utils.js";
+import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler, sent } from "./utils/route-utils.js";
 import { ErrorResponse } from "./utils/schemas.js";
 import {
-  // Request schemas
   CreateMcpRequestSchema,
   UpdateMcpRequestSchema,
-  // Response types
+  MCPResponseSchema,
+  BulkDeleteResponseSchema,
   McpResponse,
   BulkDeleteResponse,
   CreateMcpRequest,
   UpdateMcpRequest,
-  // Transformers
-  transformMcpResponse,
-  transformMcpListResponse,
-  transformBulkDeleteResponse,
-  // Re-export MCPResponseSchema for other modules
-  MCPResponseSchema,
-} from "./utils/mcp-transformers.js";
+} from "./utils/mcp-schemas.js";
 import { AuditApiAction } from "../../shared/utils/audit-log.js";
 import logger from "../../shared/utils/logger.js";
 
@@ -65,11 +59,11 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
    */
   router.get(
     "/",
-    asyncHandler(
+    validatedHandler(
       MCPResponseSchema.array(),
       async () => {
         const mcps = await mcpRepo.listAll();
-        return transformMcpListResponse(mcps);
+        return mcps;
       },
       {
         action: AuditApiAction.MCP_VIEW,
@@ -87,7 +81,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
    */
   router.post(
     "/",
-    ...validatedHandler(
+    ...validatedBodyHandler(
       CreateMcpRequestSchema,
       MCPResponseSchema,
       async (req: Request, _res, data: CreateMcpRequest) => {
@@ -116,7 +110,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
 
         logger.info({ mcpId: mcp.id, namespace: mcp.namespace }, "Added MCP");
 
-        return transformMcpResponse(mcp);
+        return mcp;
       },
       {
         action: AuditApiAction.MCP_CREATE,
@@ -136,7 +130,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
    */
   router.put(
     "/:namespace",
-    ...validatedHandler(
+    ...validatedBodyHandler(
       UpdateMcpRequestSchema,
       MCPResponseSchema,
       async (req: Request<{ namespace: string }>, res, data: UpdateMcpRequest) => {
@@ -169,7 +163,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
 
         logger.info({ namespace: req.params.namespace }, "Updated MCP");
 
-        return transformMcpResponse(updated);
+        return updated;
       },
       {
         action: AuditApiAction.MCP_UPDATE,
@@ -189,8 +183,8 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
    */
   router.delete(
     "/all",
-    asyncHandler(
-      null,
+    validatedHandler(
+      BulkDeleteResponseSchema,
       async (req) => {
         const descendantIds = await userRepo.collectDescendantIds(req.apiAuth!.userId);
         const allUserIds = [req.apiAuth!.userId, ...descendantIds];
@@ -205,7 +199,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
           "Bulk deleted MCPs"
         );
 
-        return transformBulkDeleteResponse(mcps.length, namespaces);
+        return { count: mcps.length, mcps: namespaces };
       },
       {
         action: AuditApiAction.MCP_DELETE,
@@ -223,7 +217,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
    */
   router.get(
     "/:namespace",
-    asyncHandler(
+    validatedHandler(
       MCPResponseSchema,
       async (req: Request<{ namespace: string }>, res) => {
         const mcp = await mcpRepo.findByNamespace(req.params.namespace);
@@ -233,7 +227,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
           });
         }
 
-        return transformMcpResponse(mcp);
+        return mcp;
       },
       {
         action: AuditApiAction.MCP_VIEW,
@@ -251,7 +245,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
     */
   router.delete(
     "/:namespace",
-    asyncHandler(
+    validatedHandler(
       null,
       async (req: Request<{ namespace: string }>, res) => {
         const mcp = await mcpRepo.findByNamespace(req.params.namespace);

@@ -25,24 +25,21 @@ import express, { Request, Response, Router } from "express";
 import { PrismaClient, PermissionType } from "@prisma/client";
 import { ApiUserRepository } from "../../shared/infra/repository/index.js";
 import { hasPermission, isAdmin } from "../middleware/auth.js";
-import { asyncHandler, sendNotFound, sendForbidden, validatedHandler } from "./utils/route-utils.js";
+import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler } from "./utils/route-utils.js";
 import { RequestHandler } from "express-serve-static-core";
-import { ErrorResponse } from "./utils/schemas.js";
 import {
-  // Request schemas
   AddPermissionRequestSchema,
   RemovePermissionRequestSchema,
-  // Response types
+  PermissionListResponseSchema,
+  UserPermissionsResponseSchema,
+  ChangePermissionResponseSchema,
   PermissionListResponse,
   UserPermissionsResponse,
   ChangePermissionResponse,
   AddPermissionRequest,
   RemovePermissionRequest,
-  // Transformers
-  transformUserPermissionsResponse,
-  transformChangePermissionResponse,
-  transformPermissionListResponse,
-} from "./utils/permission-transformers.js";
+  PERMISSION_DESCRIPTIONS,
+} from "./utils/permission-schemas.js";
 import { AuditApiAction } from "../../shared/utils/audit-log.js";
 
 // Re-export types for backwards compatibility
@@ -64,9 +61,12 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
   */
   router.get(
     "/",
-    asyncHandler(
-      null,
-      async () => transformPermissionListResponse(),
+    validatedHandler(
+      PermissionListResponseSchema,
+      async () => ({
+        permissions: Object.values(PermissionType),
+        descriptions: PERMISSION_DESCRIPTIONS,
+      }),
       {
         action: AuditApiAction.OTHER,
       }
@@ -81,8 +81,8 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
    */
   router.get(
     "/me",
-    asyncHandler<UserPermissionsResponse>(
-      null,
+    validatedHandler(
+      UserPermissionsResponseSchema,
       async (req, res) => {
         const user = await apiUserRepo.getWithPermissions(req.apiAuth!.userId);
 
@@ -96,7 +96,12 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
           );
         }
 
-        return transformUserPermissionsResponse(user);
+        return {
+          id: user.id,
+          name: user.name,
+          isAdmin: user.isAdmin,
+          permissions: user.permissions.map(p => p.permission),
+        };
       },
       {
         action: AuditApiAction.USER_VIEW,
@@ -116,8 +121,8 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
    */
   router.get(
     "/user-id/:id",
-    asyncHandler<UserPermissionsResponse>(
-      null,
+    validatedHandler(
+      UserPermissionsResponseSchema,
       async (req, res) => {
         if (!hasPermission(req, PermissionType.VIEW_PERMISSIONS)) {
           return sendForbidden(
@@ -140,7 +145,12 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
           );
         }
 
-        return transformUserPermissionsResponse(user);
+        return {
+          id: user.id,
+          name: user.name,
+          isAdmin: user.isAdmin,
+          permissions: user.permissions.map(p => p.permission),
+        };
       },
       {
         action: AuditApiAction.USER_VIEW,
@@ -159,9 +169,9 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
    */
   router.post(
     "/user-id/:id/add",
-    ...validatedHandler<AddPermissionRequest, ChangePermissionResponse>(
+    ...validatedBodyHandler(
       AddPermissionRequestSchema,
-      null,
+      ChangePermissionResponseSchema,
       async (req, res, data) => {
         const targetUser = await apiUserRepo.getWithPermissions(req.params.id);
 
@@ -212,11 +222,12 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
           ...new Set([...targetUser.permissions.map(p => p.permission), ...data.permissions]),
         ];
 
-        return transformChangePermissionResponse(
-          targetUser,
-          newPermissions,
-          affectedUsers
-        );
+        return {
+          id: targetUser.id,
+          name: targetUser.name,
+          permissions: newPermissions,
+          affectedUsers,
+        };
       },
       {
         action: AuditApiAction.PERMISSION_ADD,
@@ -237,9 +248,9 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
    */
   router.post(
     "/user-id/:id/remove",
-    ...validatedHandler<RemovePermissionRequest, ChangePermissionResponse>(
+    ...validatedBodyHandler(
       RemovePermissionRequestSchema,
-      null,
+      ChangePermissionResponseSchema,
       async (req, res, data) => {
         const targetUser = await apiUserRepo.getWithPermissions(req.params.id);
 
@@ -287,11 +298,12 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
           .map(p => p.permission)
           .filter(p => !data.permissions.includes(p));
 
-        return transformChangePermissionResponse(
-          targetUser,
-          newPermissions,
-          affectedUsers
-        );
+        return {
+          id: targetUser.id,
+          name: targetUser.name,
+          permissions: newPermissions,
+          affectedUsers,
+        };
       },
       {
         action: AuditApiAction.PERMISSION_REMOVE,

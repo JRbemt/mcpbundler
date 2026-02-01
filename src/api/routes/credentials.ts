@@ -24,8 +24,8 @@ import {
 } from "../../shared/infra/repository/index.js";
 import { AuditApiAction } from "../../shared/utils/audit-log.js";
 import {
+  validatedBodyHandler,
   validatedHandler,
-  asyncHandler,
   sendNotFound,
   sendConflict,
 } from "./utils/route-utils.js";
@@ -86,7 +86,7 @@ export function createCredentialRoutes(prisma: PrismaClient): Router {
    * POST /api/credentials/:namespace
    * Bind credentials to a token+MCP combination
    */
-  router.post("/:namespace", ...validatedHandler(
+  router.post("/:namespace", ...validatedBodyHandler(
     BindCredentialRequestSchema,
     CredentialResponseSchema,
     async (req, res, data) => {
@@ -142,7 +142,7 @@ export function createCredentialRoutes(prisma: PrismaClient): Router {
    * PUT /api/credentials/:namespace
    * Update credentials for a token+MCP combination
    */
-  router.put("/:namespace", ...validatedHandler(
+  router.put("/:namespace", ...validatedBodyHandler(
     UpdateCredentialRequestSchema,
     CredentialResponseSchema,
     async (req, res, data) => {
@@ -186,7 +186,7 @@ export function createCredentialRoutes(prisma: PrismaClient): Router {
    * DELETE /api/credentials/:namespace
    * Remove credentials for a token+MCP combination
    */
-  router.delete("/:namespace", asyncHandler(
+  router.delete("/:namespace", validatedHandler(
     null,
     async (req, res) => {
       const { namespace } = req.params;
@@ -221,7 +221,7 @@ export function createCredentialRoutes(prisma: PrismaClient): Router {
    * GET /api/credentials
    * List all MCP credentials for the authenticated bundle token
    */
-  router.get("/", asyncHandler(
+  router.get("/", validatedHandler(
     CredentialListResponseSchema,
     async (req, _res) => {
       const token = req.bundleToken!;

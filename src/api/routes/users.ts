@@ -20,82 +20,49 @@
  * with permission inheritance, cascade revocation, SHA-256 hashed keys shown once.
  */
 
-import express, { Request, RequestHandler, Response, Router } from "express";
+import express, { RequestHandler, Router } from "express";
 import { PrismaClient, PermissionType } from "@prisma/client";
 import { ApiUserRepository, GlobalSettingsRepository } from "../../shared/infra/repository/index.js";
 import { hasPermission, isAdmin } from "../middleware/auth.js";
-import { z } from "zod";
 import { AuditApiAction } from "../../shared/utils/audit-log.js";
-import { asyncHandler, sendForbidden, sendNotFound, sent, validatedHandler } from "./utils/route-utils.js";
+import { z } from "zod";
+import { validatedHandler, sendForbidden, sendNotFound, sent, validatedBodyHandler } from "./utils/route-utils.js";
+import {
+  BaseUserSchema,
+  UserResponseSchema,
+  UserResponseWithCreatedUsersSchema,
+  CreateUserRequestSchema,
+  CreateUserResponseSchema,
+  UpdateUserRequestSchema,
+  DeleteUserResponseSchema,
+  DeleteAllUsersResponseSchema,
+  BaseUser,
+  User,
+  UserResponse,
+  UserResponseWithCreatedUsers,
+  CreateUserRequest,
+  UpdateUserRequest,
+  CreateUserResponse,
+  DeleteUserResponse,
+  DeleteAllUsersResponse,
+} from "./utils/user-schemas.js";
 
-
-export const BaseUserSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  contact: z.string(),
-  department: z.string().nullable(),
-  isAdmin: z.boolean().optional(),
-})
-
-/**
- * Request/Response schemas for user endpoints
- */
-export const UserResponseSchema = BaseUserSchema.extend({
-  isAdmin: z.boolean(),
-  permissions: z.array(z.enum(PermissionType)),
-  createdAt: z.date(),
-  lastUsedAt: z.date().nullable(),
-  revokedAt: z.date().nullable(),
-  updatedAt: z.date(),
-  createdById: z.string().nullable(),
-  createdBy: z.object({
-    name: z.string(),
-    id: z.string()
-  }).optional().nullable()
-});
-
-const UserResponseWithCreatedUsersSchema = UserResponseSchema.extend({
-  createdUsers: z.array(UserResponseSchema),
-});
-
-const CreateUserRequestSchema = z.object({
-  name: z.string().min(1, "Name is required and cannot be empty"),
-  contact: z.email("Valid email address required"),
-  department: z.string().optional(),
-  permissions: z.array(z.enum(PermissionType)).optional().default([]),
-  isAdmin: z.boolean().optional().default(false),
-});
-
-const CreateUserResponseSchema = UserResponseSchema.extend({
-  apiKey: z.string(),
-});
-
-const UpdateUserRequestSchema = BaseUserSchema.omit({
-  id: true,
-}).partial()
-
-
-
-const DeleteUserResponseSchema = z.object({
-  userId: z.string(),
-});
-
-const DeleteAllUsersResponseSchema = z.object({
-  total: z.number(),
-  users: z.array(DeleteUserResponseSchema),
-});
-
-
-export type BaseUser = z.infer<typeof BaseUserSchema>;
-export type User = z.infer<typeof UserResponseSchema>;
-export type CreateUserRequest = z.infer<typeof CreateUserRequestSchema>;
-export type UpdateUserRequest = z.infer<typeof UpdateUserRequestSchema>;
-
-export type UserResponse = z.infer<typeof UserResponseSchema>;
-export type CreateUserResponse = z.infer<typeof CreateUserResponseSchema>;
-export type UserResponseWithCreatedUsers = z.infer<typeof UserResponseWithCreatedUsersSchema>;
-export type DeleteUserResponse = z.infer<typeof DeleteUserResponseSchema>;
-export type DeleteAllUsersResponse = z.infer<typeof DeleteAllUsersResponseSchema>;
+// Re-export schemas and types for backwards compatibility
+export {
+  BaseUserSchema,
+  UserResponseSchema,
+};
+export type {
+  BaseUser,
+  User,
+  UserResponse,
+  UserResponseWithCreatedUsers,
+  CreateUserRequest,
+  UpdateUserRequest,
+  CreateUserResponse,
+  DeleteUserResponse,
+  DeleteAllUsersResponse,
+};
 
 
 
@@ -110,7 +77,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
    */
   router.post(
     "/self",
-    ...validatedHandler(
+    ...validatedBodyHandler(
       CreateUserRequestSchema,
       CreateUserResponseSchema,
       async (req, res, data) => {
@@ -163,7 +130,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
    */
   router.post(
     "/",
-    ...validatedHandler(
+    ...validatedBodyHandler(
       CreateUserRequestSchema,
       CreateUserResponseSchema,
       async (req, res, data) => {
@@ -230,7 +197,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
    */
   router.get(
     "/me",
-    asyncHandler(
+    validatedHandler(
       UserResponseWithCreatedUsersSchema,
       async (req, res) => {
         const user = await apiUserRepo.getWithPermissions(req.apiAuth!.userId);
@@ -261,7 +228,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
    */
   router.put(
     "/me",
-    ...validatedHandler(
+    ...validatedBodyHandler(
       UpdateUserRequestSchema,
       BaseUserSchema,
       async (req, _res, data) => {
@@ -286,7 +253,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
    */
   router.post(
     "/me/revoke",
-    asyncHandler(
+    validatedHandler(
       DeleteUserResponseSchema,
       async (req) => {
         const user = await apiUserRepo.revoke(req.apiAuth!.userId);
@@ -304,7 +271,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
    */
   router.post(
     "/:userId/revoke",
-    asyncHandler(
+    validatedHandler(
       DeleteAllUsersResponseSchema,
       async (req, res) => {
         const target = await apiUserRepo.getWithPermissions(req.params.userId);
@@ -345,7 +312,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
    */
   router.get(
     "/",
-    asyncHandler(
+    validatedHandler(
       z.array(UserResponseSchema),
       async (req, res) => {
         if (!hasPermission(req, PermissionType.LIST_USERS)) {
@@ -377,7 +344,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
    */
   router.get(
     "/by-name/:name",
-    asyncHandler(
+    validatedHandler(
       UserResponseSchema,
       async (req, res) => {
         if (!isAdmin(req)) {

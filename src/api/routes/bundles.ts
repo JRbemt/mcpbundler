@@ -28,15 +28,17 @@ import {
   BundleRepository,
   McpRepository,
 } from "../../shared/infra/repository/index.js";
-import { asyncHandler, sendNotFound, sendForbidden, validatedHandler, sent } from "./utils/route-utils.js";
-import { MCPResponseSchema, McpResponse } from "./mcps.js";
-import { ErrorResponse } from "./utils/schemas.js";
+import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler, sent } from "./utils/route-utils.js";
+import { MCPResponseSchema, McpResponse } from "./utils/mcp-schemas.js";
 import {
-  // Request schemas
   CreateBundleRequestSchema,
   GenerateTokenRequestSchema,
   AddMcpsByNamespaceRequestSchema,
-  // Response types
+  BundleResponseSchema,
+  CreateBundleResponseSchema,
+  ListTokenResponseSchema,
+  GenerateTokenResponseSchema,
+  AddMcpByNamespaceResponseSchema,
   BundleResponse,
   CreateBundleResponse,
   GenerateTokenResponse,
@@ -45,15 +47,32 @@ import {
   CreateBundleRequest,
   GenerateTokenRequest,
   AddMcpsByNamespaceRequest,
-  // Transformers
-  transformBundleResponse,
-  transformBundleListResponse,
-  transformCreateBundleResponse,
-  transformTokenListResponse,
-  transformGenerateTokenResponse,
-} from "./utils/bundle-transformers.js";
+} from "./utils/bundle-schemas.js";
 import { AuditApiAction } from "../../shared/utils/audit-log.js";
 import logger from "../../shared/utils/logger.js";
+import { BundleWithMcpsAndCreator } from "../../shared/infra/repository/BundleRepository.js";
+
+/**
+ * Transform bundle with MCPs from database format to API response format
+ * Parses JSON permission strings into objects
+ */
+function toBundleResponse(bundle: BundleWithMcpsAndCreator): BundleResponse {
+  return {
+    id: bundle.id,
+    name: bundle.name,
+    description: bundle.description,
+    createdAt: bundle.createdAt,
+    createdBy: bundle.createdBy,
+    mcps: bundle.mcps.map((entry) => ({
+      ...entry.mcp,
+      permissions: {
+        allowedTools: JSON.parse(entry.allowedTools),
+        allowedResources: JSON.parse(entry.allowedResources),
+        allowedPrompts: JSON.parse(entry.allowedPrompts),
+      },
+    })),
+  };
+}
 
 // Re-export types for backwards compatibility
 export type {
@@ -88,11 +107,11 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
     */
   router.get(
     "/",
-    asyncHandler(
-      null,
+    validatedHandler(
+      BundleResponseSchema.array(),
       async () => {
         const bundles = await bundleRepo.list();
-        return transformBundleListResponse(bundles);
+        return bundles.map(toBundleResponse);
       },
       {
         action: AuditApiAction.BUNDLE_VIEW,
@@ -111,13 +130,13 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.get(
     "/me",
-    asyncHandler(
-      null,
+    validatedHandler(
+      BundleResponseSchema.array(),
       async (req) => {
         const descendantIds = await userRepo.collectDescendantIds(req.apiAuth!.userId);
         const ids = [req.apiAuth!.userId, ...descendantIds];
         const bundles = await bundleRepo.listByCreators(ids);
-        return transformBundleListResponse(bundles);
+        return bundles.map(toBundleResponse);
       },
       {
         action: AuditApiAction.BUNDLE_VIEW,
@@ -135,8 +154,8 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.get(
     "/:id",
-    asyncHandler(
-      null,
+    validatedHandler(
+      BundleResponseSchema,
       async (req: Request<{ id: string }>, res) => {
         const bundle = await bundleRepo.findById(req.params.id);
         if (!bundle) {
@@ -145,7 +164,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
           });
         }
 
-        return transformBundleResponse(bundle);
+        return toBundleResponse(bundle);
       },
       {
         action: AuditApiAction.BUNDLE_VIEW,
@@ -163,9 +182,9 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.post(
     "/",
-    ...validatedHandler(
+    ...validatedBodyHandler(
       CreateBundleRequestSchema,
-      null,
+      CreateBundleResponseSchema,
       async (req, _res, data: CreateBundleRequest) => {
         const createdById = req.apiAuth?.userId ?? null;
         const { record } = await bundleRepo.create({
@@ -175,7 +194,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
         });
 
         logger.info({ bundleId: record.id }, "Created bundle");
-        return transformCreateBundleResponse(record);
+        return record;
       },
       {
         action: AuditApiAction.BUNDLE_CREATE,
@@ -193,7 +212,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.delete(
     "/:id",
-    asyncHandler(
+    validatedHandler(
       null,
       async (req: Request<{ id: string }>, res) => {
         const bundle = await bundleRepo.findById(req.params.id);
@@ -233,9 +252,9 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.post(
     "/:id",
-    ...validatedHandler(
+    ...validatedBodyHandler(
       AddMcpsByNamespaceRequestSchema,
-      null,
+      AddMcpByNamespaceResponseSchema,
       async (req: Request<{ id: string }>, res, data: AddMcpsByNamespaceRequest) => {
         const bundle = await bundleRepo.findById(req.params.id);
         if (!bundle) {
@@ -302,7 +321,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.delete(
     "/:id/:namespace",
-    asyncHandler(
+    validatedHandler(
       null,
       async (req: Request<{ id: string; namespace: string }>, res) => {
         const bundle = await bundleRepo.findById(req.params.id);
@@ -358,9 +377,9 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.post(
     "/:id/tokens",
-    ...validatedHandler(
+    ...validatedBodyHandler(
       GenerateTokenRequestSchema,
-      null,
+      GenerateTokenResponseSchema,
       async (req: Request<{ id: string }>, res, data: GenerateTokenRequest) => {
         const bundle = await bundleRepo.findById(req.params.id);
         if (!bundle) {
@@ -381,7 +400,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
         });
 
         logger.info({ bundleId: req.params.id, tokenId: record.id }, "Generated token");
-        return transformGenerateTokenResponse(record, token);
+        return { ...record, token };
       },
       {
         action: AuditApiAction.TOKEN_CREATE,
@@ -399,8 +418,8 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.get(
     "/:id/tokens",
-    asyncHandler(
-      null,
+    validatedHandler(
+      ListTokenResponseSchema,
       async (req: Request<{ id: string }>, res) => {
         const bundle = await bundleRepo.findById(req.params.id);
         if (!bundle) {
@@ -410,7 +429,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
         }
 
         const tokens = await tokenRepo.list(req.params.id);
-        return transformTokenListResponse(tokens);
+        return tokens;
       },
       {
         action: AuditApiAction.TOKEN_VIEW,
@@ -427,7 +446,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
    */
   router.delete(
     "/:id/tokens/:tokenId",
-    asyncHandler(
+    validatedHandler(
       null,
       async (req: Request<{ id: string; tokenId: string }>, res) => {
         const token = await tokenRepo.findById(req.params.tokenId);

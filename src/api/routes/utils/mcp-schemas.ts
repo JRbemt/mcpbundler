@@ -1,15 +1,14 @@
 /**
- * MCP Response Transformers
+ * MCP Schemas - Zod schemas for MCP endpoints
  *
- * Transforms database entities to API response types for MCP endpoints.
- * Contains all Zod schemas for MCP-related endpoints.
+ * Request and response schemas for MCP management endpoints.
  */
 
 import { z } from "zod";
 import { MCPAuthConfigSchema, AuthStrategy } from "../../../shared/domain/entities.js";
 
 /**
- * Schema definitions - Request schemas
+ * Request schemas
  */
 export const CreateMcpRequestSchema = z.object({
   namespace: z
@@ -30,7 +29,7 @@ export const CreateMcpRequestSchema = z.object({
 export const UpdateMcpRequestSchema = CreateMcpRequestSchema.partial().omit({ namespace: true });
 
 /**
- * Schema definitions - Response schemas
+ * Response schemas
  */
 export const MCPResponseSchema = CreateMcpRequestSchema.extend({
   id: z.string(),
@@ -58,46 +57,3 @@ export type CreateMcpRequest = z.infer<typeof CreateMcpRequestSchema>;
 export type UpdateMcpRequest = z.infer<typeof UpdateMcpRequestSchema>;
 export type McpResponse = z.infer<typeof MCPResponseSchema>;
 export type BulkDeleteResponse = z.infer<typeof BulkDeleteResponseSchema>;
-
-/**
- * MCP database entity type for transformers
- */
-interface McpEntity {
-  id: string;
-  namespace: string;
-  url: string;
-  description: string;
-  version: string;
-  stateless: boolean;
-  authStrategy: string;
-  createdAt: Date;
-  updatedAt: Date;
-  createdBy?: { id: string; name: string } | null;
-}
-
-/**
- * Transform MCP entity to response format
- */
-export function transformMcpResponse(mcp: McpEntity): McpResponse {
-  return MCPResponseSchema.strip().parse(mcp);
-}
-
-/**
- * Transform MCP list to response format
- */
-export function transformMcpListResponse(mcps: McpEntity[]): McpResponse[] {
-  return mcps.map((m) => MCPResponseSchema.strip().parse(m));
-}
-
-/**
- * Transform bulk delete result to response format
- */
-export function transformBulkDeleteResponse(
-  count: number,
-  namespaces: string[]
-): BulkDeleteResponse {
-  return BulkDeleteResponseSchema.parse({
-    deleted: count,
-    mcps: namespaces,
-  });
-}

@@ -1,18 +1,15 @@
 /**
- * Bundle Response Transformers
+ * Bundle Schemas - Zod schemas for bundle endpoints
  *
- * Transforms database entities to API response types.
- * Handles permission JSON parsing and schema validation.
- * Contains all Zod schemas for bundle-related endpoints.
+ * Request and response schemas for bundle management endpoints.
  */
 
 import { z } from "zod";
-import { CreatedBundle, McpPermissionsSchema } from "../../../shared/domain/entities.js";
-import { MCPResponseSchema } from "./mcp-transformers.js";
-import { BundleWithMcpsAndCreator } from "../../../shared/infra/repository/BundleRepository.js";
+import { McpPermissionsSchema } from "../../../shared/domain/entities.js";
+import { MCPResponseSchema } from "./mcp-schemas.js";
 
 /**
- * Schema definitions - Request schemas
+ * Request schemas
  */
 export const CreateBundleRequestSchema = z.object({
   name: z.string().min(1, "Bundle name is required and cannot be empty"),
@@ -36,7 +33,7 @@ export const AddMcpsByNamespaceRequestSchema = z.union([
 ]);
 
 /**
- * Schema definitions - Response schemas
+ * Response schemas
  */
 export const BundleCreatorSchema = z.object({
   id: z.string(),
@@ -102,72 +99,3 @@ export type CreateBundleResponse = z.infer<typeof CreateBundleResponseSchema>;
 export type GenerateTokenResponse = z.infer<typeof GenerateTokenResponseSchema>;
 export type ListTokenResponse = z.infer<typeof ListTokenResponseSchema>;
 export type AddMcpByNamespaceResponse = z.infer<typeof AddMcpByNamespaceResponseSchema>;
-
-/**
- * Transform a bundle with MCPs from database format to API response format
- */
-export function transformBundleResponse(bundle: BundleWithMcpsAndCreator): BundleResponse {
-  return BundleResponseSchema.parse({
-    id: bundle.id,
-    name: bundle.name,
-    description: bundle.description,
-    createdAt: bundle.createdAt,
-    createdBy: bundle.createdBy,
-    mcps: bundle.mcps.map((entry) => ({
-      ...MCPResponseSchema.strip().parse(entry.mcp),
-      permissions: {
-        allowedTools: JSON.parse(entry.allowedTools),
-        allowedResources: JSON.parse(entry.allowedResources),
-        allowedPrompts: JSON.parse(entry.allowedPrompts),
-      },
-    })),
-  });
-}
-
-/**
- * Transform multiple bundles to API response format
- */
-export function transformBundleListResponse(bundles: BundleWithMcpsAndCreator[]): BundleResponse[] {
-  return bundles.map(transformBundleResponse);
-}
-
-/**
- * Transform a created bundle to response format (no mcps)
- */
-export function transformCreateBundleResponse(bundle: CreatedBundle): CreateBundleResponse {
-  return CreateBundleResponseSchema.parse({
-    id: bundle.id,
-    name: bundle.name,
-    description: bundle.description,
-    createdAt: bundle.createdAt,
-    createdBy: bundle.createdBy,
-  });
-}
-
-/**
- * Transform token list to response format
- */
-export function transformTokenListResponse(tokens: Array<{
-  id: string;
-  name: string;
-  description: string | null;
-  expiresAt: Date | null;
-  revoked: boolean;
-  createdAt: Date;
-}>): ListTokenResponse {
-  return ListTokenResponseSchema.parse(tokens.map((t) => TokenResponseSchema.strip().parse(t)));
-}
-
-/**
- * Transform generated token to response format
- */
-export function transformGenerateTokenResponse(record: {
-  id: string;
-  name: string;
-  description: string | null;
-  expiresAt: Date | null;
-  revoked: boolean;
-  createdAt: Date;
-}, token: string): GenerateTokenResponse {
-  return GenerateTokenResponseSchema.strip().parse({ ...record, token });
-}

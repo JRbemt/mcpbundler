@@ -109,7 +109,19 @@ export class DBBundleResolver implements ResolverService {
       'Wildcard bundle resolved'
     );
 
-
+    upstreams.push({
+      id: "",
+      namespace: "files",
+      url: "http://localhost:3001/mcp",
+      description: "",
+      version: "",
+      stateless: false,
+      authStrategy: "NONE",
+      masterAuth: null,
+      createdAt: "" as any,
+      updatedAt: "" as any,
+      createdById: null
+    })
 
     return upstreams;
   }

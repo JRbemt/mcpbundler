@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import z from "zod";
 
-export { PrismaClient, BundleAccessToken, GlobalSettings, MCPBundleEntry, BundledMCPCredential, Mcp, Bundle, ApiUser, PermissionType, AuthStrategy, Session } from "@prisma/client";
+export { PrismaClient, BundleAccessToken, GlobalSettings, MCPBundleEntry, BundledMCPCredential, Mcp, Bundle, ApiUser, PermissionType, AuthStrategy } from "@prisma/client";
 
 export type CreatedBundle = Prisma.BundleGetPayload<{
     include: { createdBy: { select: { id: true, name: true } } };
