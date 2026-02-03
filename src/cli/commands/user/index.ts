@@ -10,7 +10,7 @@ import { HELP_FOOTER } from "../../utils/print-utils.js";
 
 export function createUserCommand(): Command {
   const user = new Command("user")
-    .description("manage API users")
+    .description("manage API users (requires --token)")
     .showHelpAfterError()
     .showSuggestionAfterError();
 
@@ -18,7 +18,7 @@ export function createUserCommand(): Command {
 
   user
     .command("create")
-    .description("create a new API user (requires valid token/ CREATE_USER permission or self-service enabled)")
+    .description("create a new API user (requires CREATE_USER permission or self-service enabled)")
     .requiredOption("-n, --name <name>", "username")
     .requiredOption("-c, --contact <email>", "contact email")
     .option("-d, --department <department>", "department")
@@ -30,7 +30,7 @@ export function createUserCommand(): Command {
 
   user
     .command("list")
-    .description("list all API users (requires valid token/ LIST_USERS permission)")
+    .description("list all API users (requires LIST_USERS permission)")
     .option("--include-revoked", "include revoked users")
     .action((options, cmd) => {
       listCommand(cmd.optsWithGlobals());
@@ -38,14 +38,14 @@ export function createUserCommand(): Command {
 
   user
     .command("me")
-    .description("view your own user profile (requires valid token)")
+    .description("view your own user profile")
     .action((options, cmd) => {
       meCommand(cmd.optsWithGlobals());
     });
 
   user
     .command("revoke-created")
-    .description("revoke user(s) you created (requires valid token)")
+    .description("revoke user(s) you created")
     .option("-u, --user-id <userId>", "ID of the user to revoke")
     .option("--all", "revoke ALL users you created")
     .action((options, cmd) => {
@@ -54,14 +54,14 @@ export function createUserCommand(): Command {
 
   user
     .command("revoke-self")
-    .description("revoke your own API key (requires valid token)")
+    .description("revoke your own API key")
     .action((options, cmd) => {
       revokeSelfCommand(cmd.optsWithGlobals());
     });
 
   user
     .command("update")
-    .description("update your own profile (requires valid token)")
+    .description("update your own profile")
     .option("-n, --name <name>", "new name")
     .option("-c, --contact <email>", "new contact email")
     .option("-d, --department <department>", "new department")

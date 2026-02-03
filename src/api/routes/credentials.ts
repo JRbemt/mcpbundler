@@ -28,6 +28,7 @@ import {
   validatedHandler,
   sendNotFound,
   sendConflict,
+  sent,
 } from "./utils/route-utils.js";
 import {
   BindCredentialRequestSchema,
@@ -93,17 +94,42 @@ export function createCredentialRoutes(prisma: PrismaClient): Router {
       const { namespace } = req.params;
       const token = req.bundleToken!;
 
+      logger.debug({ tokenId: token.id, bundleId: token.bundleId, namespace }, "Binding credentials - looking up MCP");
+
       const mcp = await mcpRepo.findByNamespace(namespace);
       if (!mcp) {
         return sendNotFound(res, "MCP", req, AuditApiAction.CREDENTIAL_BIND, { namespace });
       }
 
+      logger.debug({ mcpId: mcp.id, mcpNamespace: mcp.namespace, tokenBundleId: token.bundleId }, "Found MCP, checking bundle association");
+
       const bundleMcp = await bundleRepo.findMcpInBundle(token.bundleId, mcp.id);
       if (!bundleMcp) {
-        return sendNotFound(res, "MCP in bundle", req, AuditApiAction.CREDENTIAL_BIND, {
-          namespace,
-          bundleId: token.bundleId,
+        logger.warn({ tokenBundleId: token.bundleId, mcpId: mcp.id, namespace }, "MCP not found in token's bundle");
+
+        // Check if the bundle exists at all to provide better error context
+        const bundle = await bundleRepo.findById(token.bundleId);
+        const bundleMcpNamespaces = bundle?.mcps.map(m => m.mcp.namespace) ?? [];
+
+        logger.warn({
+          tokenBundleId: token.bundleId,
+          bundleExists: !!bundle,
+          bundleMcps: bundleMcpNamespaces,
+          requestedNamespace: namespace
+        }, "Bundle context for failed credential bind");
+
+        res.status(404).json({
+          error: "MCP in bundle not found",
+          details: {
+            message: `MCP "${namespace}" is not in the bundle associated with this token`,
+            bundleId: token.bundleId,
+            availableMcps: bundleMcpNamespaces,
+            hint: bundleMcpNamespaces.length === 0
+              ? "This token's bundle has no MCPs. Add the MCP to the bundle first."
+              : `Available MCPs in this bundle: ${bundleMcpNamespaces.join(", ")}`
+          }
         });
+        return sent();
       }
 
       const existing = await mcpCredRepo.findByTokenAndMcp(token.id, mcp.id);

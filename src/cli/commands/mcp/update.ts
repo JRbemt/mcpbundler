@@ -7,7 +7,7 @@ interface UpdateOptions {
   description?: string;
   mcpVersion?: string;
   stateless?: boolean;
-  authType?: "MASTER" | "USER_SET" | "NONE";
+  authStrategy?: "MASTER" | "USER_SET" | "NONE";
   authBearer?: string;
   authBasic?: string;
   authApikey?: string;
@@ -85,8 +85,8 @@ export async function updateMcpCommand(namespace: string, options: UpdateOptions
       updateData.stateless = options.stateless;
     }
 
-    if (options.authType !== undefined) {
-      updateData.authStrategy = options.authType;
+    if (options.authStrategy !== undefined) {
+      updateData.authStrategy = options.authStrategy;
     }
 
     // Handle auth config updates
@@ -126,7 +126,7 @@ export async function updateMcpCommand(namespace: string, options: UpdateOptions
     if (options.description) changes.push(`Description updated`);
     if (options.mcpVersion) changes.push(`Version: ${existing.version} → ${updated.version}`);
     if (options.stateless !== undefined) changes.push(`Stateless: ${existing.stateless} → ${updated.stateless}`);
-    if (options.authType) changes.push(`Auth Strategy: ${existing.authStrategy} → ${updated.authStrategy}`);
+    if (options.authStrategy) changes.push(`Auth Strategy: ${existing.authStrategy} → ${updated.authStrategy}`);
     if (authConfig) changes.push(`Master Auth: ${authConfig.method}`);
     if (options.clearAuth) changes.push(`Master Auth: cleared`);
 

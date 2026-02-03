@@ -55,8 +55,8 @@ export async function bindCredentialCommand(
             };
         } else if (options.authApikey) {
             const parts = options.authApikey.split(":");
-            const key = parts[0];
-            const header = parts.length > 1 ? parts.slice(1).join(":") : "X-API-Key";
+            const key = parts[0].trim();
+            const header = parts.length > 1 ? parts.slice(1).join(":").trim() : "X-API-Key";
             authConfig = {
                 method: "api_key",
                 key,
@@ -83,15 +83,32 @@ export async function bindCredentialCommand(
     } catch (error: any) {
         console.error(`Failed to bind credentials: ${error.response?.data?.error || error.message}`);
 
-        if (error.response?.data?.details) {
-            console.error("\nValidation errors:");
-            if (Array.isArray(error.response.data.details)) {
-                error.response.data.details.forEach((detail: any) => {
+        const details = error.response?.data?.details;
+        if (details) {
+            // Handle structured error details (e.g., from "MCP in bundle not found")
+            if (details.message) {
+                console.error(`\n${details.message}`);
+            }
+            if (details.bundleId) {
+                console.error(`  Bundle ID: ${details.bundleId}`);
+            }
+            if (details.availableMcps && Array.isArray(details.availableMcps)) {
+                if (details.availableMcps.length > 0) {
+                    console.error(`  Available MCPs: ${details.availableMcps.join(", ")}`);
+                } else {
+                    console.error("  Available MCPs: (none)");
+                }
+            }
+            if (details.hint) {
+                console.error(`\nHint: ${details.hint}`);
+            }
+            // Handle validation errors (array format)
+            if (Array.isArray(details)) {
+                console.error("\nValidation errors:");
+                details.forEach((detail: any) => {
                     const field = detail.path?.join(".") || "unknown";
                     console.error(`  - ${field}: ${detail.message}`);
                 });
-            } else {
-                console.error(`  ${JSON.stringify(error.response.data.details, null, 2)}`);
             }
         }
 

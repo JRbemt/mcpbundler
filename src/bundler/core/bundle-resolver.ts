@@ -249,7 +249,7 @@ export class DBBundleResolver implements ResolverService {
 
       upstreams.push(config);
     }
-
+    console.log(upstreams);
     return upstreams;
   }
 }

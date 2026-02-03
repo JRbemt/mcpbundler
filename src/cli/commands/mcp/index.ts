@@ -18,11 +18,11 @@ export function createMcpsCommand(): Command {
     .showSuggestionAfterError();
 
   command.command("add <namespace> <url>")
-    .description("add an MCP server manually via URL and metadata (requires valid token/ ADD_MCP permission)")
+    .description("add an MCP server manually via URL and metadata (requires ADD_MCP permission)")
     .requiredOption("--description <description>", "Description of the MCP server")
     .option("-v, --mcp-version [version]", "Version of the MCP server", "1.0.0")
     .option("--stateless", "mark as stateless", false)
-    .addOption(new Option("--auth-type <type>", "which auth credentials are used by bundles accessing the MCP").choices(["MASTER", "NONE", "USER_SET"]).default("NONE"))
+    .addOption(new Option("--auth-strategy <type>", "which auth credentials are used by bundles accessing the MCP").choices(["MASTER", "NONE", "USER_SET"]).default("NONE"))
     .option("--auth-bearer <token>", "bearer token authentication (optional)")
     .option("--auth-basic <user:pass>", "basic authentication username:password (optional)")
     .option("--auth-apikey <key[:header]>", "API key authentication (format: key or key:HeaderName, default header: X-API-Key)")
@@ -32,20 +32,20 @@ export function createMcpsCommand(): Command {
 
   command
     .command("list")
-    .description("list all MCP servers (requires valid token)")
+    .description("list all MCP servers (requires --token)")
     .action((options, cmd) => {
       listMcpCommand(cmd.optsWithGlobals());
     });
 
   command
     .command("update <namespace>")
-    .description("update an existing MCP server (requires valid token and ownership)")
+    .description("update an existing MCP server (requires ownership)")
     .option("--url <url>", "new URL for the MCP server")
     .option("--description <description>", "new description")
     .option("-v, --mcp-version <version>", "new version")
     .option("--stateless", "mark as stateless")
     .option("--no-stateless", "mark as stateful")
-    .addOption(new Option("--auth-type <type>", "auth strategy for bundles accessing the MCP").choices(["MASTER", "NONE", "USER_SET"]))
+    .addOption(new Option("--auth-strategy <type>", "auth strategy for bundles accessing the MCP").choices(["MASTER", "NONE", "USER_SET"]))
     .option("--auth-bearer <token>", "bearer token authentication")
     .option("--auth-basic <user:pass>", "basic authentication username:password")
     .option("--auth-apikey <key[:header]>", "API key authentication (format: key or key:HeaderName, default header: X-API-Key)")
@@ -56,7 +56,7 @@ export function createMcpsCommand(): Command {
 
   command
     .command("remove <namespace>")
-    .description("remove an MCP server (requires valid token)")
+    .description("remove an MCP server")
     .option("--all", "Remove all MCPs created by you")
     .action((namespace, options, cmd) => {
       removeMcpCommand(namespace, cmd.optsWithGlobals());

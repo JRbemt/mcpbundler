@@ -41,6 +41,105 @@ export const FG_COLORS = {
 } as const;
 
 
+/**
+ * Wraps text at specified width, normalizing whitespace and newlines.
+ * Returns an array of lines that fit within the specified width.
+ */
+export function wrapText(text: string, width: number): string[] {
+  if (!text) return ["-"];
+  const normalizedText = text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
+  const words = normalizedText.split(" ");
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const testLine = currentLine ? currentLine + " " + word : word;
+    if (testLine.length <= width) {
+      currentLine = testLine;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+
+  return lines;
+}
+
+export interface TableColumn {
+  header: string;
+  width: number;
+  key: string;
+}
+
+export interface PrintTableOptions {
+  columns: TableColumn[];
+  color?: string;
+  maxRows?: number;
+  indent?: string;
+}
+
+/**
+ * Prints a formatted table with word-wrapped content.
+ * Supports multi-line cells and configurable column widths.
+ */
+export function printTable<T extends Record<string, string | undefined>>(
+  data: T[],
+  options: PrintTableOptions
+): void {
+  const { columns, maxRows, indent = "   " } = options;
+  const color = options.color ?? FG_COLORS.GREEN;
+  const reset = "\x1b[0m";
+
+  const rowsToShow = maxRows ? data.slice(0, maxRows) : data;
+
+  // Build border strings
+  const topBorder = `${indent}┌─${columns.map(c => "─".repeat(c.width)).join("─┬─")}─┐`;
+  const headerSeparator = `${indent}├─${columns.map(c => "─".repeat(c.width)).join("─┼─")}─┤`;
+  const rowSeparator = headerSeparator;
+  const bottomBorder = `${indent}└─${columns.map(c => "─".repeat(c.width)).join("─┴─")}─┘`;
+
+  // Print header
+  console.group();
+  console.log(topBorder);
+  const headerRow = columns.map(c => `${color}${c.header.padEnd(c.width)}${reset}`).join(" │ ");
+  console.log(`${indent}│ ${headerRow} │`);
+  console.log(headerSeparator);
+
+  // Print data rows
+  rowsToShow.forEach((row, index) => {
+    const wrappedColumns = columns.map(c => wrapText(row[c.key] || "-", c.width));
+    const maxLines = Math.max(...wrappedColumns.map(w => w.length));
+
+    for (let i = 0; i < maxLines; i++) {
+      const lineParts = columns.map((c, colIndex) => {
+        const part = wrappedColumns[colIndex][i] || "";
+        return `${color}${part.padEnd(c.width)}${reset}`;
+      });
+      console.log(`${indent}│ ${lineParts.join(" │ ")} │`);
+    }
+
+    if (index < rowsToShow.length - 1) {
+      console.log(rowSeparator);
+    }
+  });
+
+  // Print "more" row if truncated
+  if (maxRows && data.length > maxRows) {
+    console.log(rowSeparator);
+    const moreText = `... ${data.length - maxRows} more item(s) not shown ...`;
+    const firstCol = `${color}${"...".padEnd(columns[0].width)}${reset}`;
+    const restCols = columns.slice(1).map((c, i) => {
+      const text = i === 0 ? moreText : "";
+      return `${color}${text.padEnd(c.width)}${reset}`;
+    });
+    console.log(`${indent}│ ${[firstCol, ...restCols].join(" │ ")} │`);
+  }
+
+  console.log(bottomBorder);
+  console.groupEnd();
+}
+
 export function banner(
   text: string,
   options?: {

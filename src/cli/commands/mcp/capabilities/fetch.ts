@@ -103,14 +103,11 @@ export async function fetchMcpCapabilities(
             throw error;
         }
     } catch (error: any) {
+        const errorMessage = error.response?.data?.error || error.message || "Unknown error";
         if (error.name === "AbortError" || controller.signal.aborted) {
             console.error(`Failed to fetch capabilities (${transportType}): Timeout after ${timeoutMs}ms`);
         } else {
-            const errorMessage = error.response?.data?.error || error.message;
-            // Only log error if we're not falling back
-            if (transportType === "sse") {
-                console.error(`Failed to fetch capabilities: ${errorMessage}`);
-            }
+            console.error(`Failed to fetch capabilities (${transportType}): ${errorMessage}`);
         }
         return null;
     } finally {
