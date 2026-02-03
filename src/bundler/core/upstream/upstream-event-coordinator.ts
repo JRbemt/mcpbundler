@@ -14,7 +14,7 @@
  */
 
 import EventEmitter from "events";
-import { IUpstreamConnector, UPSTREAM_EVENTS } from "../../domain/upstream.js";
+import { IUpstreamConnector, UPSTREAM_EVENTS } from "./upstream.js";
 import logger from "../../../shared/utils/logger.js";
 /**
  * Coordinates upstream event handling and notification debouncing.

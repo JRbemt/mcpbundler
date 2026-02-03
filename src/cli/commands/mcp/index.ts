@@ -25,7 +25,7 @@ export function createMcpsCommand(): Command {
     .addOption(new Option("--auth-type <type>", "which auth credentials are used by bundles accessing the MCP").choices(["MASTER", "NONE", "USER_SET"]).default("NONE"))
     .option("--auth-bearer <token>", "bearer token authentication (optional)")
     .option("--auth-basic <user:pass>", "basic authentication username:password (optional)")
-    .option("--auth-apikey <key>", "API key authentication (optional)")
+    .option("--auth-apikey <key[:header]>", "API key authentication (format: key or key:HeaderName, default header: X-API-Key)")
     .action((namespace, url, options, cmd) => {
       addMcpCommand(namespace, url, cmd.optsWithGlobals());
     });
@@ -48,7 +48,7 @@ export function createMcpsCommand(): Command {
     .addOption(new Option("--auth-type <type>", "auth strategy for bundles accessing the MCP").choices(["MASTER", "NONE", "USER_SET"]))
     .option("--auth-bearer <token>", "bearer token authentication")
     .option("--auth-basic <user:pass>", "basic authentication username:password")
-    .option("--auth-apikey <key>", "API key authentication")
+    .option("--auth-apikey <key[:header]>", "API key authentication (format: key or key:HeaderName, default header: X-API-Key)")
     .option("--clear-auth", "remove master auth credentials")
     .action((namespace, options, cmd) => {
       updateMcpCommand(namespace, cmd.optsWithGlobals());

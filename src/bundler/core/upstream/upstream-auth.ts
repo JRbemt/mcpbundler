@@ -41,7 +41,6 @@ export class UpstreamOAuthProvider implements OAuthClientProvider {
 
   saveClientInformation(info: OAuthClientInformationMixed): void {
     this._clientInfo = info;
-    logger.debug({ clientId: info.client_id }, "OAuth client information saved");
   }
 
   tokens(): OAuthTokens | undefined {
@@ -50,11 +49,9 @@ export class UpstreamOAuthProvider implements OAuthClientProvider {
 
   saveTokens(tokens: OAuthTokens): void {
     this._tokens = tokens;
-    logger.debug("OAuth tokens saved");
   }
 
   redirectToAuthorization(url: URL): void {
-    logger.info({ authUrl: url.toString() }, "OAuth authorization required");
     console.log(`Authorization required for upstream: ${url.toString()}`);
   }
 
@@ -72,13 +69,11 @@ export class UpstreamOAuthProvider implements OAuthClientProvider {
 
 export function buildAuthOptions(config?: MCPAuthConfig): StreamableHTTPClientTransportOptions {
   if (!config || config.method === "none") {
-    logger.debug("Building no-auth options");
     return {};
   }
 
   switch (config.method) {
     case "bearer":
-      logger.debug("Building bearer token auth options");
       return {
         requestInit: {
           headers: {
@@ -89,7 +84,6 @@ export function buildAuthOptions(config?: MCPAuthConfig): StreamableHTTPClientTr
 
     case "basic": {
       const credentials = Buffer.from(`${config.username}:${config.password}`).toString("base64");
-      logger.debug("Building basic auth options");
       return {
         requestInit: {
           headers: {
@@ -100,7 +94,6 @@ export function buildAuthOptions(config?: MCPAuthConfig): StreamableHTTPClientTr
     }
 
     case "api_key":
-      logger.debug({ headerName: config.header }, "Building API key auth options");
       return {
         requestInit: {
           headers: {
@@ -110,7 +103,6 @@ export function buildAuthOptions(config?: MCPAuthConfig): StreamableHTTPClientTr
       };
 
     default:
-      logger.debug("Unknown auth method, using no-auth options");
       return {};
   }
 }

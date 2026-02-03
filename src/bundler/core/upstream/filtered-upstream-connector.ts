@@ -19,11 +19,11 @@ import {
   ResourceTemplate,
   Prompt,
 } from "@modelcontextprotocol/sdk/types.js";
-import { INamespaceService } from "../core/namespace-resolver.js";
-import { IPermissionService } from "../core/permission-manager.js";
+import { INamespaceService } from "../session/namespace-resolver.js";
+import { IPermissionService } from "../session/permission-manager.js";
 import { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import { IUpstreamConnector, UpstreamEventPayload, UPSTREAM_EVENTS } from "../../domain/upstream.js";
-import { MCPConfig } from "../../core/schemas.js";
+import { IUpstreamConnector, UpstreamEventPayload, UPSTREAM_EVENTS } from "./upstream.js";
+import { MCPConfig } from "../schemas.js";
 import logger from "../../../shared/utils/logger.js";
 
 /**

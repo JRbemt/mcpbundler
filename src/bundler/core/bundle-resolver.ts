@@ -18,7 +18,7 @@ import { PrismaClient } from "@prisma/client";
 import { AuthStrategy, MCPAuthConfig, MCPAuthConfigSchema, Mcp } from "../../shared/domain/entities.js";
 import { Bundle, MCPConfig } from "./schemas.js";
 import { McpCredentialRepository, BundleRepository, BundleTokenRepository, McpRepository } from "../../shared/infra/repository/index.js";
-import { decryptJSON, encrypt } from "../../shared/utils/encryption.js";
+import { decryptJSON, hashApiKey } from "../../shared/utils/encryption.js";
 import logger from "../../shared/utils/logger.js";
 import { BundleWithMcpsAndCreator } from "../../shared/infra/repository/BundleRepository.js";
 
@@ -109,20 +109,6 @@ export class DBBundleResolver implements ResolverService {
       'Wildcard bundle resolved'
     );
 
-    upstreams.push({
-      id: "",
-      namespace: "files",
-      url: "http://localhost:3001/mcp",
-      description: "",
-      version: "",
-      stateless: false,
-      authStrategy: "NONE",
-      masterAuth: null,
-      createdAt: "" as any,
-      updatedAt: "" as any,
-      createdById: null
-    })
-
     return upstreams;
   }
 
@@ -154,7 +140,7 @@ export class DBBundleResolver implements ResolverService {
 
 
     // Find token record
-    const tokenHash = encrypt(token);
+    const tokenHash = hashApiKey(token);
     const tokenRecord = await this.tokenRepo.findByHash(tokenHash);
 
     if (!tokenRecord || !this.tokenRepo.isValid(tokenRecord)) {

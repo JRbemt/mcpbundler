@@ -56,7 +56,6 @@ export class BundlerAPIClient {
     // Support both port number (localhost) and full URL (remote)
     this.baseUrl = portOrUrl;
 
-    console.log(`Creating client with: ${{ portOrUrl, token }}`)
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };

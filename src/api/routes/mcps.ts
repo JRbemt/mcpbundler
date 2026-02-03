@@ -17,12 +17,12 @@
  * created by users you created. Deletions cascade to all bundle instances.
  */
 
-import express, { Request, Response, Router } from "express";
+import express, { Request, Router } from "express";
 import { PrismaClient, PermissionType } from "@prisma/client";
 import { McpRepository, ApiUserRepository } from "../../shared/infra/repository/index.js";
 import { encryptJSON } from "../../shared/utils/encryption.js";
 import { hasPermission } from "../middleware/auth.js";
-import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler, sent } from "./utils/route-utils.js";
+import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler } from "./utils/route-utils.js";
 import {
   CreateMcpRequestSchema,
   UpdateMcpRequestSchema,
@@ -271,7 +271,7 @@ export function createMcpRoutes(prisma: PrismaClient): Router {
           "Deleted MCP"
         );
 
-        return sent();
+        return null;
       },
       {
         action: AuditApiAction.MCP_DELETE,

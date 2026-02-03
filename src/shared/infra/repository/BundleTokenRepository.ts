@@ -14,7 +14,7 @@ import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { Repository } from "../../domain/Repository.js";
 import { BundleAccessToken } from "../../domain/entities.js";
-import { encrypt } from "../../utils/encryption.js";
+import { hashApiKey } from "../../utils/encryption.js";
 
 
 
@@ -29,7 +29,7 @@ export class BundleTokenRepository implements Repository<BundleAccessToken, "id"
     record: BundleAccessToken, token: string
   }> {
     const token = randomBytes(32).toString("hex");
-    const tokenHash = encrypt(token);
+    const tokenHash = hashApiKey(token);
 
     const record = await this.client.bundleAccessToken.create({
       data: { ...item, tokenHash: tokenHash, createdAt: new Date() },
@@ -54,7 +54,7 @@ export class BundleTokenRepository implements Repository<BundleAccessToken, "id"
    * @returns Token record or null if not found
    */
   async findByToken(token: string): Promise<BundleAccessToken | null> {
-    const tokenHash = encrypt(token);
+    const tokenHash = hashApiKey(token);
     return await this.findByHash(tokenHash);
   }
 

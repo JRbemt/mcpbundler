@@ -50,10 +50,13 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
         password,
       };
     } else if (options.authApikey) {
+      const parts = options.authApikey.split(":");
+      const key = parts[0];
+      const header = parts.length > 1 ? parts.slice(1).join(":") : "X-API-Key";
       authConfig = {
         method: "api_key",
-        key: options.authApikey,
-        header: "X-API-Key",
+        key,
+        header,
       };
     }
 
@@ -114,7 +117,8 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
         // Display tools table
         if (capabilities.tools.length > 0) {
           console.log(`Tools (${capabilities.tools.length}):`);
-          const toolsToShow = capabilities.tools.slice(0, 10);
+          const nTools = 5;
+          const toolsToShow = capabilities.tools.slice(0, nTools);
 
           // Helper function to wrap text at specified width
           const wrapText = (text: string, width: number): string[] => {
@@ -168,9 +172,9 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
           });
 
           // Add "more" row if there are additional tools
-          if (capabilities.tools.length > 10) {
+          if (capabilities.tools.length > nTools) {
             console.log(`   ├─${"─".repeat(nameColWidth)}─┼─${"─".repeat(descColWidth)}─┤`);
-            const moreText = `... ${capabilities.tools.length - 10} more tool(s) not shown ...`;
+            const moreText = `... ${capabilities.tools.length - nTools} more tool(s) not shown ...`;
             console.log(`   │ ${green}${"...".padEnd(nameColWidth)}${reset} │ ${green}${moreText.padEnd(descColWidth)}${reset} │`);
           }
 

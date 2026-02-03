@@ -14,7 +14,7 @@
  */
 
 import logger from "../../../shared/utils/logger.js";
-import { MCPConfig } from "../../core/schemas.js";
+import { MCPConfig } from "../schemas.js";
 
 export interface IPermissionService {
     isToolAllowed(config: MCPConfig, toolName: string): boolean;

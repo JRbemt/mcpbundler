@@ -14,7 +14,7 @@
     "dist"
   ],
   "scripts": {
-    "dev": "npm run db:deploy:sqlite && concurrently --prefix none \"npm run watch\" \"nodemon --watch dist --exec node dist/src/main.js\"",
+    "dev": "npm run db:sqlite:deploy && concurrently --prefix none \"npm run watch\" \"nodemon --watch dist --exec node dist/src/main.js\"",
     "cli": "npm run build --silent && node dist/src/cli/index.js",
     "start": "npm run build --silent && node dist/src/main.js",
     "build": "tsc && shx chmod +x dist/**/*.js && npx copyfiles \"prisma/**/*\" \"dist/\"",

@@ -19,7 +19,7 @@
 import { Router, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { SESSION_EVENTS } from "../app/core/Session.js";
+import { SESSION_EVENTS } from "../core/session/session.js";
 import type { BundlerServer } from "../core/bundler.js";
 import logger from "../../shared/utils/logger.js";
 
@@ -48,7 +48,7 @@ export function createSseRoutes(bundler: BundlerServer): Router {
   const transportMeta = new Map<string, SseTransportMeta>();
 
   const sseLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
+    windowMs: 1 * 60 * 1000, // 1 minutes
     max: 10, // 10 connections per IP per window
     message: { error: "Too many connection attempts, please try again later" },
     standardHeaders: true,

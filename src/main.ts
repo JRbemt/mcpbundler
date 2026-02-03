@@ -25,10 +25,10 @@ import { createCredentialRoutes } from "./api/routes/credentials.js";
 import { createMcpRoutes } from "./api/routes/mcps.js";
 import { createUserRoutes } from "./api/routes/users.js";
 import { createPermissionRoutes } from "./api/routes/permissions.js";
-import { validateEncryptionKey } from "./bundler/core/auth/encryption.js";
 import { createAuthMiddleware } from "./api/middleware/auth.js";
 import { initializeSystemData, parsePermissions, SystemInitConfig } from "./shared/utils/initialize-db.js";
 import logger from "./shared/utils/logger.js";
+import { validateEncryptionKey } from "./shared/utils/encryption.js";
 
 
 const CONFIG = {
@@ -197,3 +197,4 @@ main().catch((error) => {
   logger.error({ error }, "Unhandled error in main");
   process.exit(1);
 });
+

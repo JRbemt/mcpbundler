@@ -31,16 +31,16 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { BundlerConfig, MCPConfig } from "./schemas.js";
-import { NamespaceResolver } from "../app/core/namespace-resolver.js";
-import { PermissionManager } from "../app/core/permission-manager.js";
-import { UpstreamConnectorFactory } from "../infra/upstream/UpstreamConnectorFactory.js";
-import { UpstreamConnectionPool } from "../infra/upstream/UpstreamConnectionPool.js";
+import { NamespaceResolver } from "./session/namespace-resolver.js";
+import { PermissionManager } from "./session/permission-manager.js";
 import { ResolverService } from "./bundle-resolver.js";
 import { createSseRoutes } from "../routes/bundler-sse-routes.js";
 import { createMcpRoutes } from "../routes/bundler-mcp-routes.js";
-import { Session } from "../app/core/Session.js";
+import { Session } from "./session/session.js";
 import { AuditBundlerAction, withAudit } from "../../shared/utils/audit-log.js";
 import logger from "../../shared/utils/logger.js";
+import { UpstreamConnectorFactory } from "./upstream/upstream-connector-factory.js";
+import { UpstreamConnectionPool } from "./upstream/upstream-connector-pool.js";
 
 /**
  * MCP Bundler Server Class

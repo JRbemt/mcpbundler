@@ -5,10 +5,10 @@
  * Lean implementation: no complex abstractions, just simple factory method.
  */
 
-import { IUpstreamConnector } from "../../domain/upstream.js";
-import { MCPConfig } from "../../core/schemas.js";
-import { INamespaceService } from "../../app/core/namespace-resolver.js";
-import { IPermissionService } from "../../app/core/permission-manager.js";
+import { IUpstreamConnector } from "./upstream.js";
+import { MCPConfig } from "../schemas.js";
+import { INamespaceService } from "../session/namespace-resolver.js";
+import { IPermissionService } from "../session/permission-manager.js";
 
 export interface IConnectorFactory {
   createConnector(
@@ -24,8 +24,8 @@ export class UpstreamConnectorFactory implements IConnectorFactory {
     namespaceService: INamespaceService,
     permissionService: IPermissionService
   ): Promise<IUpstreamConnector> {
-    const { HttpUpstreamConnector } = await import("../../app/upstream/upstream-connector.js");
-    const { FilteredUpstreamConnector } = await import("../../app/upstream/filtered-upstream-connector.js");
+    const { HttpUpstreamConnector } = await import("../upstream/upstream-connector.js");
+    const { FilteredUpstreamConnector } = await import("../upstream/filtered-upstream-connector.js");
 
     // Support just HTTP upstreams for now
     const baseConnector = new HttpUpstreamConnector();

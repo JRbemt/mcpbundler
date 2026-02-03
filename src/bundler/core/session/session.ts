@@ -13,14 +13,12 @@
  * - Notification forwarding for list_changed events
  */
 import { EventEmitter } from "events";
-import { createSessionEstablished, createUpstreamConnected, createUpstreamDisconnected } from "./events.js";
-import { UpstreamEventCoordinator } from "../../core/components/UpstreamEventCoordinator.js";
-import { IUpstreamConnector } from "../../domain/upstream.js";
-import { MCPConfig } from "../../core/schemas.js";
+import { createSessionEstablished, createUpstreamConnected, createUpstreamDisconnected } from "../events.js";
+import { UpstreamEventCoordinator } from "../upstream/upstream-event-coordinator.js";
+import { IUpstreamConnector } from "../upstream/upstream.js";
+import { MCPConfig } from "../schemas.js";
 import { INamespaceService } from "./namespace-resolver.js";
 import { IPermissionService } from "./permission-manager.js";
-import { IConnectorFactory } from "../../infra/upstream/UpstreamConnectorFactory.js";
-import { UpstreamConnectionPool } from "../../infra/upstream/UpstreamConnectionPool.js";
 import { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
     CallToolRequest,
@@ -44,6 +42,8 @@ import {
     Progress,
 } from "@modelcontextprotocol/sdk/types.js";
 import logger from "../../../shared/utils/logger.js";
+import { UpstreamConnectionPool } from "../upstream/upstream-connector-pool.js";
+import { IConnectorFactory } from "../upstream/upstream-connector-factory.js";
 
 /**
  * Operation types for resumption token tracking

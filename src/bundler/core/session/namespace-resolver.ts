@@ -16,7 +16,7 @@
 
 import { Prompt, Resource, ResourceTemplate, Tool } from "@modelcontextprotocol/sdk/types.js";
 import crypto from "crypto";
-import { Namespace } from "../../domain/upstream.js";
+import { Namespace } from "../upstream/upstream.js";
 
 export interface INamespaceService {
     namespaceTool(namespace: Namespace, tool: Tool): Tool;

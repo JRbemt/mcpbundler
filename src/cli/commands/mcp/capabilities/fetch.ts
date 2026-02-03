@@ -3,8 +3,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 import { Mcp } from "../../../utils/api-client.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { buildAuthOptions } from "../../../../bundler/core/auth/mcp-auth.js";
 import { MCPAuthConfig } from "../../../../shared/domain/entities.js";
+import { buildAuthOptions } from "../../../../bundler/core/upstream/upstream-auth.js";
 
 type TransportType = "sse" | "streamable-http";
 

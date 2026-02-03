@@ -56,10 +56,13 @@ export async function updateMcpCommand(namespace: string, options: UpdateOptions
         password,
       };
     } else if (options.authApikey) {
+      const parts = options.authApikey.split(":");
+      const key = parts[0];
+      const header = parts.length > 1 ? parts.slice(1).join(":") : "X-API-Key";
       authConfig = {
         method: "api_key",
-        key: options.authApikey,
-        header: "X-API-Key",
+        key,
+        header,
       };
     }
 

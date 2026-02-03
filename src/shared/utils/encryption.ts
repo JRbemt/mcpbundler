@@ -147,10 +147,44 @@ export function generateApiKey(): string {
   return `${API_KEY_PREFIX}${randomHex}`;
 }
 
+/**
+ * Hashes an API key using SHA-256 for secure storage
+ * This is deterministic (same input always produces same output),
+ * unlike encrypt() which uses random IVs.
+ */
+export function hashApiKey(apiKey: string): string {
+  return createHash("sha256").update(apiKey).digest("hex");
+}
+
 
 /**
  * Validates API key format
  */
 export function isValidApiKeyFormat(apiKey: string): boolean {
   return apiKey.startsWith(API_KEY_PREFIX) && apiKey.length >= API_KEY_PREFIX.length + 32;
+}
+/**
+ * Validates encryption key is properly configured
+ * Should be called on application startup
+ */
+export function validateEncryptionKey(): boolean {
+  try {
+    const key = getEncryptionKey();
+
+    if (!key) {
+      logger.error('ENCRYPTION_KEY not set in environment variables');
+      return false;
+    }
+
+    if (key.length < MIN_KEY_LENGTH) {
+      logger.warn(`ENCRYPTION_KEY is shorter than recommended ${MIN_KEY_LENGTH} characters`);
+    }
+
+    getEncryptionKey();
+    logger.info('Encryption key validated successfully');
+    return true;
+  } catch (error) {
+    logger.error({ error }, 'Failed to validate encryption key');
+    return false;
+  }
 }

@@ -6,7 +6,7 @@
  */
 
 import logger from "../../../shared/utils/logger.js";
-import { IUpstreamConnector } from "../../domain/upstream.js";
+import { IUpstreamConnector } from "./upstream.js";
 
 export class UpstreamConnectionPool {
   private pool = new Map<string, IUpstreamConnector>();

@@ -17,7 +17,7 @@ export function createCredentialsCommand(): Command {
         .description("bind MCP credentials to your token")
         .option("--auth-bearer <token>", "bearer token authentication")
         .option("--auth-basic <username:password>", "basic authentication (format: username:password)")
-        .option("--auth-apikey <key>", "API key authentication")
+        .option("--auth-apikey <key[:header]>", "API key authentication (format: key or key:HeaderName, default header: X-API-Key)")
         .action((bundleToken, namespace, options, cmd) => {
             bindCredentialCommand(bundleToken, namespace, cmd.optsWithGlobals());
         });
@@ -27,7 +27,7 @@ export function createCredentialsCommand(): Command {
         .description("update MCP credentials for your token")
         .option("--auth-bearer <token>", "bearer token authentication")
         .option("--auth-basic <username:password>", "basic authentication (format: username:password)")
-        .option("--auth-apikey <key>", "API key authentication")
+        .option("--auth-apikey <key[:header]>", "API key authentication (format: key or key:HeaderName, default header: X-API-Key)")
         .action((bundleToken, namespace, options, cmd) => {
             updateCredentialCommand(bundleToken, namespace, cmd.optsWithGlobals());
         });

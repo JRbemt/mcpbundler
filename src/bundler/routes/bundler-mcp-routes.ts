@@ -25,7 +25,7 @@ import rateLimit from "express-rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { randomUUID } from "crypto";
 import { BundlerServer } from "../core/bundler.js";
-import { SESSION_EVENTS } from "../app/core/Session.js";
+import { SESSION_EVENTS } from "../core/session/session.js";
 import logger from "../../shared/utils/logger.js";
 /**
  * Transport metadata for session tracking
@@ -272,6 +272,15 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         }
       };
 
+      // Handle transport errors (AbortError during disconnect is expected)
+      transport.onerror = (error: Error) => {
+        if (error.name === "AbortError") {
+          logger.debug({ sessionId: transport.sessionId }, "Transport aborted (expected during disconnect)");
+        } else {
+          logger.error({ sessionId: transport.sessionId, error: error.message }, "Transport error");
+        }
+      };
+
       // Connect MCP server to transport BEFORE handling request
       // This ensures handlers are wired up when initialize response is processed
       await bundler.getMcpServer().connect(transport);
@@ -362,11 +371,11 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
     try {
       await meta.transport.handleRequest(req, res);
     } catch (error: any) {
-      logger.error({ error: error.message, sessionId }, "Error handling MCP DELETE request");
+      logger.warn({ error: error.message, sessionId }, "Error handling MCP DELETE request");
+      if (!res.headersSent) {
+        res.status(200).end();
+      }
     }
-
-    // Clean up session
-    await cleanupSession(sessionId);
   });
 
   /**

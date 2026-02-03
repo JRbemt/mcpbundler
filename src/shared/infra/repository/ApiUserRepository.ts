@@ -17,7 +17,7 @@
 import { PrismaClient, PermissionType, Prisma } from "@prisma/client";
 import { Repository } from "../../domain/Repository.js";
 import { ApiUser, CreatedApiUser } from "../../domain/entities.js";
-import { generateApiKey, encrypt } from "../../utils/encryption.js";
+import { generateApiKey, hashApiKey } from "../../utils/encryption.js";
 import logger from "../../utils/logger.js";
 
 
@@ -31,17 +31,17 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
 
   async create(item: Omit<ApiUser, "id" | "createdAt" | "updatedAt">): Promise<{ record: ApiUser, token: string }> {
     const plaintextKey = generateApiKey();
-    const token = encrypt(plaintextKey);
+    const keyHash = hashApiKey(plaintextKey);
 
     const record = await this.client.apiUser.create({
-      data: { ...item, keyHash: token, createdAt: new Date(), updatedAt: new Date() },
+      data: { ...item, keyHash, createdAt: new Date(), updatedAt: new Date() },
     });
 
     logger.info({ id: record.id, name: record.name }, "Created new admin API key");
 
     return {
       record,
-      token,
+      token: plaintextKey,
     };
 
   }
@@ -57,7 +57,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
    * @returns API user record if valid, null if not found or revoked
    */
   async validateAndUpdate(plaintextKey: string): Promise<CreatedApiUser | null> {
-    const keyHash = encrypt(plaintextKey);
+    const keyHash = hashApiKey(plaintextKey);
     const record = await this.findByHash(keyHash);
 
     if (!record) {
@@ -426,7 +426,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
     permissions: PermissionType[]
   ): Promise<{ record: CreatedApiUser, key: string }> {
     const key = generateApiKey();
-    const keyHash = encrypt(key);
+    const keyHash = hashApiKey(key);
 
     const record = await this.client.apiUser.create({
       data: {

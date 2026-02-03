@@ -21,11 +21,11 @@ import {
   PromptListChangedNotificationSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import { buildAuthOptions } from "./upstream-auth.js";
-import { validateUpstreamUrl } from "../utils/ssrf-protection.js";
-import { upstreamRequestDurationHistogram, upstreamErrorCounter } from "../utils/metrics.js";
-import { MCPConfig } from "../../core/schemas.js";
+import { validateUpstreamUrl } from "../../utils/ssrf-protection.js";
+import { upstreamRequestDurationHistogram, upstreamErrorCounter } from "../../utils/metrics.js";
+import { MCPConfig } from "../schemas.js";
 import { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import { IUpstreamConnector, UpstreamEventPayload, UPSTREAM_EVENTS } from "../../domain/upstream.js";
+import { IUpstreamConnector, UpstreamEventPayload, UPSTREAM_EVENTS } from "./upstream.js";
 import logger from "../../../shared/utils/logger.js";
 
 export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConnector {
@@ -149,6 +149,7 @@ export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConn
   }
 
   async disconnect(): Promise<void> {
+    this.autoReconnect = false;
     this.stopHealthMonitoring();
     this.connected = false;
 
@@ -164,9 +165,8 @@ export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConn
         ]);
         logger.info({ namespace: this.config?.namespace }, "Upstream disconnected");
       } catch (error: any) {
-        // AbortError and timeout are expected when closing with pending operations
         if (error.name === "AbortError" || error.message === "Disconnect timeout") {
-          logger.debug({ namespace: this.config?.namespace }, "Upstream disconnect completed (aborted or timed out)");
+          logger.info({ namespace: this.config?.namespace }, "Upstream disconnect completed (aborted or timed out)");
         } else {
           logger.error(
             { namespace: this.config?.namespace, error: error.message },
@@ -180,6 +180,10 @@ export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConn
   }
 
   async reconnect(): Promise<void> {
+    if (!this.autoReconnect) {
+      logger.debug({ namespace: this.config?.namespace }, "Reconnection skipped (autoReconnect disabled)");
+      return;
+    }
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       throw new Error("Max reconnection attempts reached");
     }

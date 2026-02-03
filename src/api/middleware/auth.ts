@@ -31,9 +31,9 @@ import { Request, Response, NextFunction } from 'express';
 import { PrismaClient, PermissionType } from '@prisma/client';
 import { ApiUserRepository } from '../../shared/infra/repository/index.js';
 import { auditApiLog, AuditApiAction } from '../../shared/utils/audit-log.js';
-import { API_KEY_PREFIX } from '../../bundler/core/auth/encryption.js';
 import { AsyncLocalStorage } from 'async_hooks';
 import logger from '../../shared/utils/logger.js';
+import { API_KEY_PREFIX } from '../../shared/utils/encryption.js';
 
 /**
  * AsyncLocalStorage for request context propagation

@@ -28,7 +28,7 @@ import {
   BundleRepository,
   McpRepository,
 } from "../../shared/infra/repository/index.js";
-import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler, sent } from "./utils/route-utils.js";
+import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler } from "./utils/route-utils.js";
 import { MCPResponseSchema, McpResponse } from "./utils/mcp-schemas.js";
 import {
   CreateBundleRequestSchema,
@@ -235,7 +235,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
         await bundleRepo.delete(req.params.id);
         logger.info({ bundleId: req.params.id }, "Deleted bundle");
 
-        return sent();
+        return null;
       },
       {
         action: AuditApiAction.BUNDLE_DELETE,
@@ -358,7 +358,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
         await bundleRepo.removeMcp(req.params.id, mcp.id);
         logger.info({ bundleId: req.params.id, namespace: req.params.namespace }, "Removed MCP");
 
-        return sent();
+        return null;
       },
       {
         action: AuditApiAction.BUNDLE_UPDATE,
@@ -469,7 +469,7 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
         await tokenRepo.delete(req.params.tokenId);
         logger.info({ tokenId: req.params.tokenId }, "Revoked token");
 
-        return sent();
+        return null;
       },
       {
         action: AuditApiAction.TOKEN_REVOKE,
