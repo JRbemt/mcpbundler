@@ -15,7 +15,7 @@
 import { EventEmitter } from "events";
 import { createSessionEstablished, createUpstreamConnected, createUpstreamDisconnected } from "../events.js";
 import { UpstreamEventCoordinator } from "../upstream/upstream-event-coordinator.js";
-import { IUpstreamConnector } from "../upstream/upstream.js";
+import { IUpstreamConnector, UPSTREAM_EVENTS } from "../upstream/upstream.js";
 import { MCPConfig } from "../schemas.js";
 import { INamespaceService } from "./namespace-resolver.js";
 import { IPermissionService } from "./permission-manager.js";
@@ -132,13 +132,13 @@ export class Session extends EventEmitter {
      * Routes can listen to these events and forward to the client transport.
      */
     private setupNotificationForwarding(): void {
-        this.eventCoordinator.on("notify_tools_changed", (notification) => {
+        this.eventCoordinator.on(UPSTREAM_EVENTS.TOOLS_LIST_CHANGED, (notification) => {
             this.emit(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, notification);
         });
-        this.eventCoordinator.on("notify_resources_changed", (notification) => {
+        this.eventCoordinator.on(UPSTREAM_EVENTS.RESOURCES_LIST_CHANGED, (notification) => {
             this.emit(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, notification);
         });
-        this.eventCoordinator.on("notify_prompts_changed", (notification) => {
+        this.eventCoordinator.on(UPSTREAM_EVENTS.PROMPTS_LIST_CHANGED, (notification) => {
             this.emit(SESSION_EVENTS.NOTIFY_PROMPTS_CHANGED, notification);
         });
     }
