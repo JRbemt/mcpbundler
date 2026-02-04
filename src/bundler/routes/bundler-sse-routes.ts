@@ -8,7 +8,6 @@
  * Endpoints:
  * - GET  /sse - Establish SSE connection (bearer token auth, rate limited)
  * - POST /messages - Send MCP messages to session
- * - GET  /metrics - Public monitoring endpoint
  *
  * Rate limiting: 10 connections per IP per 15 minutes. Session limit enforced
  * by max_sessions config. Automatic idle timeout cleanup.

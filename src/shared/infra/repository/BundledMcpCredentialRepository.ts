@@ -16,7 +16,7 @@
  * @see schema.prisma
  */
 
-import { PrismaClient, BundledMCPCredential, Prisma } from "@prisma/client";
+import { PrismaClient, BundledMCPCredential, Prisma } from "../../domain/entities.js";
 import { Repository } from "../../domain/Repository.js";
 import { MCPAuthConfig, MCPAuthConfigSchema } from "../../domain/entities.js";
 import { decryptJSON, encryptJSON } from "../../utils/encryption.js";

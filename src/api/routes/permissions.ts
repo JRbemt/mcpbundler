@@ -22,7 +22,7 @@
  */
 
 import express, { Request, Response, Router } from "express";
-import { PrismaClient, PermissionType } from "@prisma/client";
+import { PrismaClient, PermissionType } from "../../shared/domain/entities.js";
 import { ApiUserRepository } from "../../shared/infra/repository/index.js";
 import { hasPermission, isAdmin } from "../middleware/auth.js";
 import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler } from "./utils/route-utils.js";

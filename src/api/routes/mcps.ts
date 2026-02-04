@@ -18,7 +18,7 @@
  */
 
 import express, { Request, Router } from "express";
-import { PrismaClient, PermissionType } from "@prisma/client";
+import { PrismaClient, PermissionType } from "../../shared/domain/entities.js";
 import { McpRepository, ApiUserRepository } from "../../shared/infra/repository/index.js";
 import { encryptJSON } from "../../shared/utils/encryption.js";
 import { hasPermission } from "../middleware/auth.js";

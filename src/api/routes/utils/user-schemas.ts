@@ -5,7 +5,7 @@
  */
 
 import { z } from "zod";
-import { PermissionType } from "@prisma/client";
+import { PermissionType } from "../../../shared/domain/entities.js";
 
 /**
  * Base user schema for shared fields

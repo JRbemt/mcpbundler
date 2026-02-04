@@ -21,7 +21,7 @@
  */
 
 import express, { Request, Response, Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../../shared/domain/entities.js";
 import {
   BundleTokenRepository,
   ApiUserRepository,

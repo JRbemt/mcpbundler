@@ -7,7 +7,7 @@
  * @see schema.prisma
  */
 
-import { PrismaClient, PermissionType } from '@prisma/client';
+import { PrismaClient, PermissionType } from "../../domain/entities.js";
 
 export class GlobalSettingsRepository {
   private prisma: PrismaClient;

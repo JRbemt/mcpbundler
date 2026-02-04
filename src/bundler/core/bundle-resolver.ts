@@ -14,8 +14,7 @@
  * except USER_SET ones.
  */
 
-import { PrismaClient } from "@prisma/client";
-import { AuthStrategy, MCPAuthConfig, MCPAuthConfigSchema, Mcp } from "../../shared/domain/entities.js";
+import { PrismaClient, AuthStrategy, MCPAuthConfig, MCPAuthConfigSchema, Mcp } from "../../shared/domain/entities.js";
 import { Bundle, MCPConfig } from "./schemas.js";
 import { McpCredentialRepository, BundleRepository, BundleTokenRepository, McpRepository } from "../../shared/infra/repository/index.js";
 import { decryptJSON, hashApiKey } from "../../shared/utils/encryption.js";

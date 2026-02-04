@@ -10,7 +10,7 @@
  * - Token validation and encryption
  */
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../../domain/entities.js";
 import { randomBytes } from "crypto";
 import { Repository } from "../../domain/Repository.js";
 import { BundleAccessToken } from "../../domain/entities.js";

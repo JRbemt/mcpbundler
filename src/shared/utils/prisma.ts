@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../domain/entities.js";
 import logger from "./logger.js";
 
 let prismaInstance: PrismaClient | null = null;

@@ -21,7 +21,7 @@
  */
 
 import express, { RequestHandler, Router } from "express";
-import { PrismaClient, PermissionType } from "@prisma/client";
+import { PrismaClient, PermissionType } from "../../shared/domain/entities.js";
 import { ApiUserRepository, GlobalSettingsRepository } from "../../shared/infra/repository/index.js";
 import { hasPermission, isAdmin } from "../middleware/auth.js";
 import { AuditApiAction } from "../../shared/utils/audit-log.js";

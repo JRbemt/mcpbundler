@@ -14,9 +14,9 @@
  * @see schema.prisma
  */
 
-import { PrismaClient, PermissionType, Prisma } from "@prisma/client";
+import { PrismaClient, PrismaClientKnownRequestError } from "../../domain/entities.js";
 import { Repository } from "../../domain/Repository.js";
-import { ApiUser, CreatedApiUser } from "../../domain/entities.js";
+import { ApiUser, CreatedApiUser, PermissionType } from "../../domain/entities.js";
 import { generateApiKey, hashApiKey } from "../../utils/encryption.js";
 import logger from "../../utils/logger.js";
 
@@ -70,7 +70,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
       return null;
     }
 
-    const updatedRecord = await this.client.apiUser.update({
+    const updatedRecord: CreatedApiUser = await this.client.apiUser.update({
       where: { id: record.id },
       data: { lastUsedAt: new Date() },
       include: {
@@ -176,7 +176,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
       });
       affectedCount++;
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (error instanceof PrismaClientKnownRequestError && error.code === "P2002") {
         logger.debug({ userId, permission }, "Permission already exists");
         affectedCount++;
       } else {

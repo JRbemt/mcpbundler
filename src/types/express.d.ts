@@ -6,7 +6,7 @@
  */
 
 import "express-serve-static-core";
-import { PermissionType } from "@prisma/client";
+import { PermissionType } from "../shared/domain/entities.js";
 
 export interface ApiUserRequest {
     userId: string;

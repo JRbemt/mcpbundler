@@ -19,7 +19,7 @@ import express from "express";
 import { BundlerConfigSchema } from "./bundler/core/schemas.js";
 import { BundlerServer } from "./bundler/core/bundler.js";
 import { DBBundleResolver } from "./bundler/core/bundle-resolver.js";
-import { PrismaClient, PermissionType } from "@prisma/client";
+import { PrismaClient } from "./shared/domain/entities.js";
 import { createBundleRoutes } from "./api/routes/bundles.js";
 import { createCredentialRoutes } from "./api/routes/credentials.js";
 import { createMcpRoutes } from "./api/routes/mcps.js";

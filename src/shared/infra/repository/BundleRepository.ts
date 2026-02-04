@@ -9,7 +9,7 @@
  */
 
 
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../../domain/entities.js";
 import { Repository } from "../../domain/Repository.js";
 import { Bundle, McpPermissions, MCPBundleEntry, PrismaClient, CreatedBundle } from "../../domain/entities.js";
 import logger from "../../utils/logger.js";

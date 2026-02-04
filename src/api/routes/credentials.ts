@@ -14,7 +14,7 @@
  */
 
 import express, { Request, Response, Router, NextFunction } from "express";
-import { PrismaClient, BundleAccessToken } from "@prisma/client";
+import { PrismaClient, BundleAccessToken } from "../../shared/domain/entities.js";
 import logger from "../../shared/utils/logger.js";
 import {
   BundleRepository,

@@ -19,9 +19,9 @@
  * - USER_SET: Auth credentials bound to specific bundle tokens
  */
 
-import { PrismaClient, Mcp, Prisma } from '@prisma/client';
+import { PrismaClient } from "../../domain/entities.js";
 import { Repository } from '../../domain/Repository.js';
-import { MCPAuthConfig, MCPAuthConfigSchema } from '../../domain/entities.js';
+import { MCPAuthConfig, MCPAuthConfigSchema, Mcp } from '../../domain/entities.js';
 import { decryptJSON, encryptJSON } from '../../utils/encryption.js';
 import logger from '../../utils/logger.js';
 
@@ -116,7 +116,7 @@ export class McpRepository implements Repository<Mcp, "id"> {
       },
     });
 
-    return mcps.map((mcp) => {
+    return mcps.map((mcp: Mcp) => {
       const decrypted = mcp;
       return decrypted || mcp;
     });

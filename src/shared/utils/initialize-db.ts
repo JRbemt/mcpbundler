@@ -8,10 +8,11 @@
  * Safe to run on every startup - checks for existing admin before creating.
  */
 
-import { PermissionType, PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../domain/entities.js";
 import logger from "./logger.js";
 import { auditApiLog, AuditApiAction } from "./audit-log.js";
 import { ApiUserRepository, GlobalSettingsRepository } from "../infra/repository/index.js";
+import { PermissionType } from "../domain/entities.js";
 
 
 export interface SystemInitConfig {

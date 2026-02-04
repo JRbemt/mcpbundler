@@ -11,12 +11,12 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    
+    "emitDecoratorMetadata": true
   },
   "include": [
     "./**/*.ts",
-    "src/**/*", "old/utils",
+    "src/**/*",
+    "old/utils"
   ],
   "exclude": ["node_modules", "examples"]
 }

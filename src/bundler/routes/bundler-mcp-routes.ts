@@ -394,7 +394,9 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
           idleTimeMs: session.getTimeSinceLastActivity(),
           upstreams: session.getAllUpstreams().length
         }))
-      }
+      },
+      selfServiceEnabled: process.env.SELF_SERVICE_ENABLED === "true",
+      wildcardTokenEnabled: process.env.RESOLVER_WILDCARD_ALLOW === "true",
     };
     res.json(metrics);
   });

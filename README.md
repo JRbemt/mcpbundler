@@ -9,12 +9,13 @@
 MCP Bundler lets you combine multiple MCP servers into a single endpoint. Your AI agent connects once and gets access to tools, resources, and prompts from all configured servers - no need to manage multiple connections. MCP's have tremendous potential, but can not yet be managed, configured and deployed in a user-friendly way. 
 This project solves that for HTTP/SSE MCP's.
 
+Imagine: You have 5 agents running and you want to give them access to a new MCP server.
+
 **Without bundler**  
-You have 5 agents running. You want to give them access to a new MCP server. Without bundler: update config on all 5 agents and restart them.
+Update config on all 5 agents and restart them.
 
 **With bundler**  
-Add the MCP to the bundle once. All 5 agents already pointing at that bundle endpoint now have access. Done.
-
+Add the MCP to the bundle. All 5 agents already pointing at that bundle endpoint now have access.
 
 
 <p align="center">

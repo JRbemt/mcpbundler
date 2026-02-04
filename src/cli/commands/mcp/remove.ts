@@ -1,4 +1,4 @@
-import { Mcp } from "@prisma/client";
+import { Mcp } from "../../../shared/domain/entities.js";
 import { BundlerAPIClient } from "../../utils/api-client.js";
 import { banner, BG_COLORS } from "../../utils/print-utils.js";
 import * as readline from "readline";
