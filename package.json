@@ -20,6 +20,8 @@
     "build": "tsc && shx chmod +x dist/**/*.js && npx copyfiles \"prisma/**/*\" \"dist/\"",
     "watch": "tsc --watch",
     "test": "npm run build && vitest run",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:watch": "vitest --config vitest.unit.config.ts",
     "db:sqlite:deploy": "dotenv -e .env -- prisma db push --skip-generate --accept-data-loss --schema=./prisma/sqlite/schema.prisma",
     "db:sqlite:migrate": "dotenv -e .env -- prisma migrate dev --schema=./prisma/sqlite/schema.prisma",
     "db:postgres:migrate": "dotenv -e .env -- prisma migrate dev --schema=./prisma/postgres/schema.prisma",
