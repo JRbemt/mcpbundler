@@ -43,9 +43,6 @@ RUN chmod +x ./scripts/docker-entrypoint.sh
 # Switch to non-root user
 USER nodejs
 
-# Install pm2-logrotate module using local PM2
-RUN npx pm2 install pm2-logrotate && npx pm2 kill
-
 # Expose application port
 EXPOSE 3000
 

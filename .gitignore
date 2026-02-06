@@ -30,6 +30,7 @@ dist/src/utils/logs/
 
 # Development SQLite database files
 prisma/sqlite/data/
+prisma/sqlite/migrations/
 dev.db
 dev.db-journal
 dev.db-shm

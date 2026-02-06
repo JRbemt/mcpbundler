@@ -85,6 +85,7 @@ CREATE TABLE "api_user" (
     "last_used_at" TIMESTAMP(3),
     "revoked_at" TIMESTAMP(3),
     "is_admin" BOOLEAN NOT NULL,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "created_by_id" TEXT,
 
     CONSTRAINT "api_user_pkey" PRIMARY KEY ("id")

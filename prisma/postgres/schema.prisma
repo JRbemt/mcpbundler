@@ -12,7 +12,7 @@ datasource db {
 // Auth strategy for MCPs in bundles
 enum AuthStrategy {
   MASTER         // Use master token from Mcp.masterAuth
-  USER_SET       // Use token-specific credentials from BundledMCPCredential
+  USER_SET // Use token-specific credentials from BundledMCPCredential
   NONE           // No authentication required
 }
 
@@ -125,6 +125,7 @@ model ApiUser {
   lastUsedAt  DateTime?   @map("last_used_at")
   revokedAt   DateTime?   @map("revoked_at")
   isAdmin     Boolean     @map("is_admin")
+  updatedAt   DateTime    @updatedAt @map("updated_at") @default(now())
 
   createdById String?     @map("created_by_id")
   createdBy   ApiUser?    @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
@@ -164,7 +165,7 @@ model ApiUserPermission {
 model GlobalSettings {
   id                             String   @id @default("global")
   allowSelfServiceRegistration   Boolean  @default(false) @map("allow_self_service_registration")
-  defaultSelfServicePermissions  String   @default("[]") @map("default_self_service_permissions") // JSON array of PermissionType
+  defaultSelfServicePermissions  String   @default("[]")  @map("default_self_service_permissions") // JSON array of PermissionType
 
   @@map("global_settings")
 }
