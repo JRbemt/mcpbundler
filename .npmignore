@@ -6,3 +6,10 @@ tsconfig.json
 tests/
 .github/
 node_modules/
+/tests
+.dockerignore
+TODO
+.yml
+*.log
+*.tgz
+*.gz

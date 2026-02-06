@@ -24,6 +24,7 @@ nul
 
 # Log files
 *.log
+*.tgz
 *.gz
 logs/
 dist/src/utils/logs/

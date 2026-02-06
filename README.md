@@ -19,7 +19,7 @@ Add the MCP to the bundle. All 5 agents already pointing at that bundle endpoint
 
 
 <p align="center">
-  <img src="./assets/infographic.png" alt="diagram" width="800">
+  <img src="https://raw.githubusercontent.com/jrbemt/mcpbundler/master/assets/infographic.png" alt="diagram" width="800">
 </p>
 
 
@@ -83,7 +83,7 @@ docker compose up
 In this quickstart guide we will get you to run the server, and to connect your agent/client to your first bundle. 
 Which should look like this:
 <p align="center">
-  <img src="./assets/quickstart_demo.gif" alt="demo" width="800">
+  <img src="https://raw.githubusercontent.com/jrbemt/mcpbundler/master/assets/quickstart_demo.gif" alt="demo" width="800">
 </p>
 
 
@@ -121,12 +121,13 @@ This access token is used as a default Authorization Bearer header. Another opti
 # 2. Command Line Interface (CLI)
 
 <p align="center">
-  <img src="./assets/cli.png" alt="diagram" width="800">
+  <img src="https://raw.githubusercontent.com/jrbemt/mcpbundler/master/assets/cli.png" alt="diagram" width="800">
 </p>
 
-
-The CLI app enables calling the HTTP endpoints through a cli interface.
-The CLI requires a --token, and --host (default: localhost).
+The CLI app enables calling the HTTP endpoints from the command line. The easiest way to install the CLI is through npm: 
+```
+npm install @jrbemt/mcpbundler
+```
 
 # 3. Bundler
 

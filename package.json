@@ -1,23 +1,32 @@
 {
-  "name": "mcpbundler",
-  "version": "0.1.0",
+  "name": "@jrbemt/mcpbundler",
+  "version": "0.1.1",
   "description": "MCP Bundler - Aggregate multiple MCP servers into one",
   "license": "MIT",
   "author": "Joaquín van den Bemt",
   "homepage": "https://github.com/jrbemt/mcpbundler",
   "bugs": "https://github.com/jrbemt/mcpbundler/issues",
   "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "bin": {
     "mcpbundler": "dist/src/cli/index.js"
   },
   "files": [
-    "dist"
+    "dist/src"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jrbemt/mcpbundler.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "npm run db:sqlite:deploy && concurrently --prefix none \"npm run watch\" \"nodemon --watch dist --exec node dist/src/main.js\"",
     "cli": "npm run build --silent && node dist/src/cli/index.js",
     "start": "npm run build --silent && node dist/src/main.js",
-    "build": "tsc && shx chmod +x dist/**/*.js",
+    "build": "shx rm -rf dist && tsc && shx chmod +x dist/**/*.js",
     "watch": "tsc --watch",
     "test": "npm run build && vitest run",
     "test:unit": "vitest run --config vitest.unit.config.ts",

@@ -8,6 +8,8 @@ yarn-error.log
 .env.local
 .env.*.local
 *.local
+*.tgz
+*.gz
 
 # Database files
 *.db
@@ -16,6 +18,7 @@ yarn-error.log
 *.sqlite3
 dev.db*
 prisma/dev.db*
+
 
 # Build artifacts
 dist
