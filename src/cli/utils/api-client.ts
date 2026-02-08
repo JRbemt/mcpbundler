@@ -77,7 +77,7 @@ export class BundlerAPIClient {
    */
   async ping(): Promise<boolean> {
     try {
-      await this.client.get("/metrics");
+      await this.client.get("/status");
       return true;
     } catch {
       return false;
@@ -88,7 +88,7 @@ export class BundlerAPIClient {
    * Get server metrics
    */
   async getMetrics(): Promise<any> {
-    const response = await this.client.get("/metrics");
+    const response = await this.client.get("/status");
     return response.data;
   }
 

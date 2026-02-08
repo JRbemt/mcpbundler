@@ -119,20 +119,22 @@ export class DBBundleResolver implements ResolverService {
     if (this.isWildcardToken(token)) {
       logger.debug('Wildcard token used');
       const upstreams = await this.resolveWildcard();
+      const mcpConfigs: MCPConfig[] = upstreams.map((mcp) => {
+        return {
+          ...mcp,
+          auth: ((mcp.authStrategy === AuthStrategy.MASTER) && mcp.masterAuth) ? MCPAuthConfigSchema.parse(decryptJSON(mcp.masterAuth)) : undefined,
+          permissions: {
+            allowedPrompts: ["*"],
+            allowedResources: ["*"],
+            allowedTools: ["*"]
+          }
+        }
+      });
+
       return {
         bundleId: "",
         name: "all",
-        upstreams: upstreams.map((mcp) => {
-          return {
-            ...mcp,
-            auth: ((mcp.authStrategy === AuthStrategy.MASTER) && mcp.masterAuth) ? MCPAuthConfigSchema.parse(decryptJSON(mcp.masterAuth)) : undefined,
-            permissions: {
-              allowedPrompts: ["*"],
-              allowedResources: ["*"],
-              allowedTools: ["*"]
-            }
-          }
-        })
+        upstreams: mcpConfigs
       }
     }
 

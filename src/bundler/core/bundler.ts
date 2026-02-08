@@ -47,14 +47,13 @@ import { UpstreamConnectionPool } from "./upstream/upstream-connector-pool.js";
  */
 export class BundlerServer {
   private serverStartTime: number;
-  private mcpServer: Server;
   private config: BundlerConfig;
   private sessions: Record<string, Session>;
   private httpServer: any;
   private bundleResolver: ResolverService;
   private app: express.Application;
 
-  // New architecture services (shared across sessions)
+  // Shared services across sessions
   private namespaceResolver: NamespaceResolver;
   private permissionManager: PermissionManager;
   private connectorFactory: UpstreamConnectorFactory;
@@ -69,21 +68,20 @@ export class BundlerServer {
     this.sessions = {};
     this.bundleResolver = bundleResolver;
 
-    // Initialize new architecture services
     this.namespaceResolver = new NamespaceResolver();
     this.permissionManager = new PermissionManager();
     this.connectorFactory = new UpstreamConnectorFactory();
     this.connectionPool = new UpstreamConnectionPool();
 
-    // Create and configure
-    this.mcpServer = this.createMCPServer();
     this.app = this.createExpressApp();
   }
 
   /**
-   * Creates and configures the MCP Server instance
+   * Creates a new MCP Server instance with registered handlers.
+   * Called once per session because the MCP SDK enforces a 1:1
+   * relationship between a Server and its Transport.
    */
-  private createMCPServer(): Server {
+  createMCPServer(): Server {
     const server = new Server(
       {
         name: this.config.name,
@@ -354,10 +352,6 @@ export class BundlerServer {
 
   getApp(): express.Application {
     return this.app;
-  }
-
-  getMcpServer(): Server {
-    return this.mcpServer;
   }
 
   getHttpServer(): any {

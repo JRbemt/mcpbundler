@@ -156,7 +156,8 @@ export function createSseRoutes(bundler: BundlerServer): Router {
       transportMeta.delete(sessionId);
     });
 
-    await bundler.getMcpServer().connect(transport);
+    const mcpServer = bundler.createMCPServer();
+    await mcpServer.connect(transport);
     logger.info({ sessionId }, "new SSE connection established");
 
     // When client disconnects, close the session (shutdown handler above will clean up)

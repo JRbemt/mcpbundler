@@ -27,6 +27,8 @@ import { randomUUID } from "crypto";
 import { BundlerServer } from "../core/bundler.js";
 import { SESSION_EVENTS } from "../core/session/session.js";
 import logger from "../../shared/utils/logger.js";
+import { getPrometheusMetrics } from "../utils/metrics.js";
+import { register } from "prom-client";
 /**
  * Transport metadata for session tracking
  */
@@ -281,9 +283,10 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         }
       };
 
-      // Connect MCP server to transport BEFORE handling request
-      // This ensures handlers are wired up when initialize response is processed
-      await bundler.getMcpServer().connect(transport);
+      // Create a dedicated MCP Server for this session and connect it to the transport.
+      // The SDK enforces a 1:1 Server-to-Transport relationship.
+      const mcpServer = bundler.createMCPServer();
+      await mcpServer.connect(transport);
 
       // Handle the initialize request - this triggers onsessioninitialized
       await transport.handleRequest(req, res, req.body);
@@ -381,7 +384,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
   /**
    * Get session stats for monitoring
    */
-  router.get("/metrics", mcpLimiter, async (_req: Request, res: Response) => {
+  router.get("/status", mcpLimiter, async (_req: Request, res: Response) => {
     const sessions = bundler.getSessions();
     const config = bundler.getConfig();
 
@@ -399,6 +402,14 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       wildcardTokenEnabled: process.env.RESOLVER_WILDCARD_ALLOW === "true",
     };
     res.json(metrics);
+  });
+
+  /**
+   * Prometheus metrics endpoint for scraping
+   */
+  router.get("/metrics", async (_req: Request, res: Response) => {
+    res.set("Content-Type", register.contentType);
+    res.end(await getPrometheusMetrics());
   });
 
   return router;
