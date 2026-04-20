@@ -14,12 +14,13 @@
  * except USER_SET ones.
  */
 
-import { PrismaClient, AuthStrategy, MCPAuthConfig, MCPAuthConfigSchema, Mcp } from "../../shared/domain/entities.js";
-import { Bundle, MCPConfig } from "./schemas.js";
-import { McpCredentialRepository, BundleRepository, BundleTokenRepository, McpRepository } from "../../shared/infra/repository/index.js";
-import { decryptJSON, hashApiKey } from "../../shared/utils/encryption.js";
-import logger from "../../shared/utils/logger.js";
-import { BundleWithMcpsAndCreator } from "../../shared/infra/repository/BundleRepository.js";
+import { PrismaClient, AuthStrategy, MCPAuthConfig, MCPAuthConfigSchema, Mcp } from "../../../shared/domain/entities.js";
+import { Bundle, MCPConfig } from "../schemas.js";
+import { McpCredentialRepository, BundleRepository, BundleTokenRepository, McpRepository } from "../../../shared/infra/repository/index.js";
+import { decryptJSON, hashApiKey } from "../../../shared/utils/encryption.js";
+import logger from "../../../shared/utils/logger.js";
+import { BundleWithMcpsAndCreator } from "../../../shared/infra/repository/BundleRepository.js";
+import { ResolverService } from "./service.js";
 
 /**
  * Wildcard authentication configuration,
@@ -29,22 +30,6 @@ export interface WildcardBundleConfig {
   allow_wildcard_token: boolean;
   wildcard_token?: string;
 }
-
-/**
- * Interface for resloving bundle configurations
- * 
- */
-export interface ResolverService {
-  /**
-   * Resolve a bundle token to its configuration
-   *
-   * @param token - Bundle token (e.g., "mcpb_live_...")
-   * @returns Bundle configuration with upstreams
-   * @throws Error if token is invalid, expired, or revoked
-   */
-  resolveBundle(token: string): Promise<Bundle>;
-}
-
 
 /**
  * Database-backed authentication service

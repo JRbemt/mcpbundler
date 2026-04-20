@@ -1,0 +1,70 @@
+# MCP Bundler - YAML configuration example
+#
+# Set YAML_CONFIG=./mcpbundler.yaml in .env to activate this mode.
+# No database or ENCRYPTION_KEY is required.
+#
+# Secrets (tokens, API keys) belong in .env and are referenced here
+# with ${VAR_NAME} syntax. Interpolation happens at startup.
+
+# Named MCP definitions — reusable across bundles via `ref`.
+# You can also define MCPs inline inside a bundle (see below).
+mcps:
+  github:
+    url: "https://github-mcp.example.com/mcp"
+    stateless: true
+    auth:
+      method: bearer
+      token: "${GITHUB_TOKEN}"
+    description: "GitHub MCP server"
+
+  filesystem:
+    url: "http://localhost:3001"
+    stateless: false
+    auth:
+      method: none
+
+  jira:
+    url: "https://jira-mcp.example.com/mcp"
+    auth:
+      method: api_key
+      key: "${JIRA_API_KEY}"
+      header: "X-API-Token"
+
+bundles:
+  - name: "Developer Bundle"
+    token: "${DEV_BUNDLE_TOKEN}"       # Token value is resolved from .env
+    mcps:
+      - ref: github                    # References the named MCP above
+        permissions:
+          allowedTools: ["*"]
+          allowedResources: ["*"]
+          allowedPrompts: ["*"]
+
+      - ref: filesystem
+        permissions:
+          allowedTools: ["read_file", "list_directory", "write_file"]
+
+      - ref: jira
+        permissions:
+          allowedTools: ["get_issue", "search_issues", "create_issue"]
+
+      - namespace: notion              # Inline MCP — no top-level ref needed
+        url: "https://notion-mcp.example.com/mcp"
+        auth:
+          method: bearer
+          token: "${NOTION_TOKEN}"
+        permissions:
+          allowedTools: ["*"]
+
+  - name: "Read-Only Bundle"
+    token: "${READONLY_BUNDLE_TOKEN}"
+    mcps:
+      - ref: github
+        permissions:
+          allowedTools: ["get_file", "list_files", "search_code"]
+          allowedResources: ["*"]
+          allowedPrompts: []
+
+      - ref: filesystem
+        permissions:
+          allowedTools: ["read_file", "list_directory"]

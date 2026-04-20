@@ -3,5 +3,6 @@
  */
 
 export * from "./bundler.js"
-export * from "./bundle-resolver.js"
+export * from "./resolver/service.js"
+export * from "./resolver/db-resolver.js"
 export * from './schemas.js'

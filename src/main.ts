@@ -18,7 +18,10 @@ logger.debug(`.ENV initialized: [${Object.keys(output.parsed ?? {}).join(", ")}]
 import express from "express";
 import { BundlerConfigSchema } from "./bundler/core/schemas.js";
 import { BundlerServer } from "./bundler/core/bundler.js";
-import { DBBundleResolver } from "./bundler/core/bundle-resolver.js";
+import { DBBundleResolver } from "./bundler/core/resolver/db-resolver.js";
+import { APIBundleResolver } from "./bundler/core/resolver/api-bundle-resolver.js";
+import { YamlBundleResolver } from "./bundler/core/resolver/yaml-bundle-resolver.js";
+import { loadYamlConfig } from "./bundler/core/resolver/yaml-config-loader.js";
 import { PrismaClient } from "./shared/domain/entities.js";
 import { createBundleRoutes } from "./api/routes/bundles.js";
 import { createCredentialRoutes } from "./api/routes/credentials.js";
@@ -80,70 +83,84 @@ if (CONFIG.resolver.wildcard.allow_wildcard_token) {
  */
 export async function main() {
   try {
-    logger.info("Validating encryption key configuration");
-    const isProduction = process.env.NODE_ENV === "production";
-
-    if (!validateEncryptionKey()) {
-      if (isProduction) {
-        logger.error("ENCRYPTION_KEY validation failed in production environment. Exiting.");
-        process.exit(1);
-      } else {
-        logger.warn("ENCRYPTION_KEY validation failed. Continuing in development mode, but this is INSECURE!");
-      }
-    }
-
-    logger.info("Initializing database connection");
-    let databaseUrl = process.env.DATABASE_URL;
-
-    if (!databaseUrl) {
-      throw new Error("DATABASE_URL environment variable is required. Set it in .env file.");
-    }
-
-    // Parse and validate the configuration using Zod schema
     const validatedConfig = BundlerConfigSchema.parse(CONFIG.bundler);
 
-    // Create PrismaClient with explicit datasource URL
-    const prisma = new PrismaClient({
-      log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-      datasources: {
-        db: {
-          url: databaseUrl
+    const backendUrl = process.env.BACKEND_URL?.trimEnd().replace(/\/$/, "");
+    const yamlConfigPath = process.env.YAML_CONFIG?.trim();
+
+    let resolver;
+    let prisma: PrismaClient | undefined;
+
+    if (backendUrl) {
+      logger.info({ backendUrl }, "Using APIBundleResolver - delegating bundle resolution to backend");
+      resolver = new APIBundleResolver(backendUrl);
+    } else if (yamlConfigPath) {
+      logger.info({ path: yamlConfigPath }, "Using YamlBundleResolver - loading config from YAML");
+      const yamlConfig = loadYamlConfig(yamlConfigPath);
+      resolver = new YamlBundleResolver(yamlConfig);
+    } else {
+      // DB mode — requires ENCRYPTION_KEY and DATABASE_URL
+      logger.info("Validating encryption key configuration");
+      const isProduction = process.env.NODE_ENV === "production";
+
+      if (!validateEncryptionKey()) {
+        if (isProduction) {
+          logger.error("ENCRYPTION_KEY validation failed in production environment. Exiting.");
+          process.exit(1);
+        } else {
+          logger.warn("ENCRYPTION_KEY validation failed. Continuing in development mode, but this is INSECURE!");
         }
       }
-    });
 
-    const resolver = new DBBundleResolver(prisma, CONFIG.resolver.wildcard);
-    const bundlerServer = new BundlerServer(validatedConfig, resolver);
+      logger.info("Initializing database connection");
+      const databaseUrl = process.env.DATABASE_URL;
+      if (!databaseUrl) {
+        throw new Error("DATABASE_URL environment variable is required. Set it in .env file.");
+      }
 
-    // Apply SQLite optimizations for better concurrency
-    const isSqlite = databaseUrl.startsWith("file:");
-    if (isSqlite) {
-      await prisma.$queryRawUnsafe("PRAGMA journal_mode=WAL;");
-      await prisma.$queryRawUnsafe("PRAGMA busy_timeout=5000;");
+      prisma = new PrismaClient({
+        log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+        datasources: { db: { url: databaseUrl } }
+      });
+
+      // Apply SQLite optimizations for better concurrency
+      if (databaseUrl.startsWith("file:")) {
+        await prisma.$queryRawUnsafe("PRAGMA journal_mode=WAL;");
+        await prisma.$queryRawUnsafe("PRAGMA busy_timeout=5000;");
+      }
+
+      logger.info("Using DBBundleResolver - standalone mode");
+      resolver = new DBBundleResolver(prisma, CONFIG.resolver.wildcard);
     }
 
-    // Initialize system data (root user and global settings)
-    const systemConfig = buildSystemInitConfig();
-    await initializeSystemData(prisma, systemConfig);
-
-    // Mount management API routes BEFORE starting the HTTP server
+    const bundlerServer = new BundlerServer(validatedConfig, resolver);
     const app = bundlerServer.getApp();
-    const authMiddleware = createAuthMiddleware(prisma);
 
-    const apiRouter = express.Router();
-    apiRouter.use(express.json());
-    // Add request logging middleware for debugging
-    apiRouter.use((req, res, next) => {
-      logger.debug({ method: req.method, path: req.path, url: req.url }, 'Incoming request');
-      next();
-    });
+    // Mount management API only in DB mode (YAML and API modes have no local data store)
+    if (!backendUrl && !yamlConfigPath && prisma) {
+      const systemConfig = buildSystemInitConfig();
+      await initializeSystemData(prisma, systemConfig);
 
-    apiRouter.use("/bundles", authMiddleware, createBundleRoutes(prisma));
-    apiRouter.use("/credentials", createCredentialRoutes(prisma));
-    apiRouter.use("/mcps", authMiddleware, createMcpRoutes(prisma));
-    apiRouter.use("/users", createUserRoutes(authMiddleware, prisma));
-    apiRouter.use("/permissions", createPermissionRoutes(authMiddleware, prisma));
-    app.use("/api", apiRouter);
+      const authMiddleware = createAuthMiddleware(prisma);
+      const apiRouter = express.Router();
+      apiRouter.use(express.json());
+      apiRouter.use((req, res, next) => {
+        logger.debug({ method: req.method, path: req.path, url: req.url }, "Incoming request");
+        next();
+      });
+
+      apiRouter.use("/bundles", authMiddleware, createBundleRoutes(prisma));
+      apiRouter.use("/credentials", createCredentialRoutes(prisma));
+      apiRouter.use("/mcps", authMiddleware, createMcpRoutes(prisma));
+      apiRouter.use("/users", createUserRoutes(authMiddleware, prisma));
+      apiRouter.use("/permissions", createPermissionRoutes(authMiddleware, prisma));
+      app.use("/api", apiRouter);
+      logger.info("Management API mounted at /api");
+    } else if (backendUrl) {
+      logger.info("Management API disabled - backend integration active");
+    } else {
+      logger.info("Management API disabled - YAML config mode active");
+    }
 
     // Start the HTTP server after all routes are mounted
     const { shutdown: shutdownFn } = await bundlerServer.start();
@@ -153,8 +170,10 @@ export async function main() {
       logger.info({ signal }, "Received shutdown signal");
       try {
         await shutdownFn();
-        logger.info("Disconnecting from database");
-        await prisma.$disconnect();
+        if (prisma) {
+          logger.info("Disconnecting from database");
+          await prisma.$disconnect();
+        }
         logger.info({ msg: "Server shutdown completed successfully" });
         process.exit(0);
       } catch (error) {
@@ -166,7 +185,6 @@ export async function main() {
     process.on("SIGINT", () => handleShutdown("SIGINT"));
     process.on("SIGTERM", () => handleShutdown("SIGTERM"));
 
-    // Handle uncaught exceptions and unhandled rejections
     process.on("uncaughtException", (error) => {
       logger.error({ error }, "Uncaught exception");
       process.exit(1);
@@ -197,4 +215,3 @@ main().catch((error) => {
   logger.error({ error }, "Unhandled error in main");
   process.exit(1);
 });
-

@@ -33,7 +33,7 @@ import {
 import { BundlerConfig, MCPConfig } from "./schemas.js";
 import { NamespaceResolver } from "./session/namespace-resolver.js";
 import { PermissionManager } from "./session/permission-manager.js";
-import { ResolverService } from "./bundle-resolver.js";
+import { ResolverService } from "./resolver/service.js";
 import { createSseRoutes } from "../routes/bundler-sse-routes.js";
 import { createMcpRoutes } from "../routes/bundler-mcp-routes.js";
 import { Session } from "./session/session.js";
