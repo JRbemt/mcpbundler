@@ -23,6 +23,7 @@ export interface INamespaceService {
     namespaceResource(namespace: Namespace, resource: Resource): Resource;
     namespaceResourceTemplate(namespace: Namespace, template: ResourceTemplate): ResourceTemplate;
     namespacePrompt(namespace: Namespace, prompt: Prompt): Prompt;
+    namespaceUri(namespace: Namespace, uri: string): string;
     extractNamespaceFromName(name: string): { namespace: string; address: string };
     extractNamespaceFromUri(uri: string): { namespace: string | undefined; address: string };
 }
@@ -73,53 +74,6 @@ export class NamespaceResolver implements INamespaceService {
     public setHashMode(mode: ToolNameHashMode): void {
         this.hashMode = mode;
         this.toolLookup.clear();
-    }
-
-    public extractNamespace(
-        item: Tool | Prompt | Resource | ResourceTemplate
-    ): { namespace?: string; address: string } {
-
-        // Tool / Prompt (name-based)
-        if (
-            ("name" in item && "inputSchema" in item) || // Tool
-            ("name" in item && "messages" in item)       // Prompt
-        ) {
-            const idx = item.name.indexOf(this.separator);
-            if (idx === -1) {
-                throw new Error(`Missing namespace in name "${item.name}"`);
-            }
-
-            return {
-                namespace: item.name.slice(0, idx),
-                address: item.name.slice(idx + this.separator.length),
-            };
-        }
-
-        // Resource (uri-based) 
-        if ("uri" in item) {
-            const url = new URL(item.uri, "http://dummy");
-            const namespace = url.searchParams.get("namespace") || undefined;
-            url.searchParams.delete("namespace");
-
-            return {
-                namespace,
-                address: url.toString().replace("http://dummy", ""),
-            };
-        }
-
-        // ResourceTemplate (uriTemplate-based)
-        if ("uriTemplate" in item) {
-            const url = new URL(item.uriTemplate, "http://dummy");
-            const namespace = url.searchParams.get("namespace") || undefined;
-            url.searchParams.delete("namespace");
-
-            return {
-                namespace,
-                address: url.toString().replace("http://dummy", ""),
-            };
-        }
-
-        throw new Error("Unsupported item type");
     }
 
     /**
@@ -200,40 +154,50 @@ export class NamespaceResolver implements INamespaceService {
     public namespaceTool(namespace: Namespace, tool: Tool): Tool {
         const shouldHash = this.shouldHashTool(namespace, tool);
         const hash: string | undefined = shouldHash ? this.hashToolName(namespace, tool.name) : undefined;
+
+        const existingMeta = tool._meta as Record<string, unknown> | undefined;
+        const existingUi = existingMeta?.ui as Record<string, unknown> | undefined;
+
+        let namespacedUi: Record<string, unknown> | undefined;
+        if (existingUi) {
+            const originalResourceUri = existingUi.resourceUri as string | undefined;
+            namespacedUi = {
+                ...existingUi,
+                ...(originalResourceUri ? { resourceUri: this.namespaceUri(namespace, originalResourceUri) } : {}),
+            };
+        }
+
         return {
             ...tool,
             name: shouldHash ? hash : `${namespace}${this.separator}${tool.name}`,
             title: `${namespace}${this.separator}${tool.name}`,
             _meta: {
-                ...(tool._meta || {}), ...(shouldHash ? {
+                ...(existingMeta || {}),
+                ...(namespacedUi ? { ui: namespacedUi } : {}),
+                ...(shouldHash ? {
                     originalName: tool.name,
                     namespace,
                     hashAlgorithm: "sha256",
                     hashLength: 12,
                     createdBy: "mcpbundler.ai",
-                } : {})
+                } : {}),
             },
         } as Tool;
     }
-    /**
-     * Add namespace as query parameter to a resource URI.
-     */
-    public namespaceResource(namespace: Namespace, resource: Resource): Resource {
+
+    public namespaceUri(namespace: Namespace, uri: string): string {
         try {
-            const url = new URL(resource.uri);
+            const url = new URL(uri);
             url.searchParams.set("namespace", namespace);
-            return {
-                ...resource,
-                uri: url.toString()
-            };
+            return url.toString();
         } catch {
-            // fallback for relative/invalid URLs: append ?namespace=...
-            const sep = resource.uri.includes("?") ? "&" : "?";
-            return {
-                ...resource,
-                uri: `${resource.uri}${sep}namespace=${namespace}`
-            };
+            const sep = uri.includes("?") ? "&" : "?";
+            return `${uri}${sep}namespace=${encodeURIComponent(namespace)}`;
         }
+    }
+
+    public namespaceResource(namespace: Namespace, resource: Resource): Resource {
+        return { ...resource, uri: this.namespaceUri(namespace, resource.uri) };
     }
 
     /** 
@@ -247,21 +211,7 @@ export class NamespaceResolver implements INamespaceService {
      * Add namespace as query parameter to a resource template URI.
      */
     public namespaceResourceTemplate(namespace: Namespace, resource: ResourceTemplate): ResourceTemplate {
-        try {
-            const url = new URL(resource.uriTemplate);
-            url.searchParams.set("namespace", namespace);
-            return {
-                ...resource,
-                uriTemplate: url.toString()
-            };
-        } catch {
-            // fallback for relative/invalid URLs: append ?namespace=...
-            const sep = resource.uriTemplate.includes("?") ? "&" : "?";
-            return {
-                ...resource,
-                uriTemplate: `${resource.uriTemplate}${sep}namespace=${namespace}`
-            };
-        }
+        return { ...resource, uriTemplate: this.namespaceUri(namespace, resource.uriTemplate) };
     }
 
     /**

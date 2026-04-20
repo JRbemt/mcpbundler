@@ -1,6 +1,6 @@
 {
   "name": "@jrbemt/mcpbundler",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP Bundler - Aggregate multiple MCP servers into one",
   "license": "MIT",
   "author": "Joaquín van den Bemt",
