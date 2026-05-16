@@ -99,7 +99,7 @@ export async function main() {
       const yamlConfig = loadYamlConfig(yamlConfigPath);
       resolver = new YamlBundleResolver(yamlConfig);
     } else {
-      // DB mode — requires ENCRYPTION_KEY and DATABASE_URL
+      // DB mode = requires ENCRYPTION_KEY and DATABASE_URL
       logger.info("Validating encryption key configuration");
       const isProduction = process.env.NODE_ENV === "production";
 

@@ -6,7 +6,7 @@
 # Secrets (tokens, API keys) belong in .env and are referenced here
 # with ${VAR_NAME} syntax. Interpolation happens at startup.
 
-# Named MCP definitions — reusable across bundles via `ref`.
+# Named MCP definitions = reusable across bundles via `ref`.
 # You can also define MCPs inline inside a bundle (see below).
 mcps:
   github:
@@ -48,7 +48,7 @@ bundles:
         permissions:
           allowedTools: ["get_issue", "search_issues", "create_issue"]
 
-      - namespace: notion              # Inline MCP — no top-level ref needed
+      - namespace: notion              # Inline MCP = no top-level ref needed
         url: "https://notion-mcp.example.com/mcp"
         auth:
           method: bearer
