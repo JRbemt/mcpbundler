@@ -5,7 +5,6 @@ import type {
   OAuthClientInformationMixed
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import logger from "../../../shared/utils/logger.js";
 import { MCPAuthConfig } from "../../../shared/domain/entities.js";
 
 export class UpstreamOAuthProvider implements OAuthClientProvider {

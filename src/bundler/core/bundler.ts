@@ -41,6 +41,10 @@ import { AuditBundlerAction, withAudit } from "../../shared/utils/audit-log.js";
 import logger from "../../shared/utils/logger.js";
 import { UpstreamConnectorFactory } from "./upstream/upstream-connector-factory.js";
 import { UpstreamConnectionPool } from "./upstream/upstream-connector-pool.js";
+import { LoadingStrategy } from "./loading/loading-strategy.js";
+import { BundlerMiddleware } from "./middleware/bundler-middleware.js";
+import { PassthroughMiddleware } from "./middleware/passthrough-middleware.js";
+import { BundlerSystemToolsMiddleware } from "./middleware/bundler-system-tools-middleware.js";
 
 /**
  * MCP Bundler Server Class
@@ -254,10 +258,12 @@ export class BundlerServer {
   }
 
   /**
-   * Create a new session with the new architecture
+   * Create a new session with default middleware pre-installed.
+   * Stores the full bundle catalog on the session so middleware can inspect
+   * available (but not yet attached) upstreams.
    */
-  public createSession(sessionId: string, bundleId: string): Session {
-    return Session.create(
+  public createSession(sessionId: string, bundleId: string, availableUpstreams: MCPConfig[] = []): Session {
+    const session = Session.create(
       sessionId,
       bundleId,
       this.namespaceResolver,
@@ -265,23 +271,66 @@ export class BundlerServer {
       this.connectorFactory,
       this.connectionPool
     );
+    session.setAvailableUpstreams(availableUpstreams);
+
+    // Install default middleware: passthrough identity + system tools registry
+    session.addMiddleware(new PassthroughMiddleware());
+    session.addMiddleware(new BundlerSystemToolsMiddleware());
+
+    return session;
   }
 
   /**
-   * Attach upstreams to a session (async - uses new attachUpstream API)
+   * Attach upstreams to a session concurrently.
+   * All upstreams begin their connection handshake in parallel; failures are
+   * isolated per-upstream and do not block others.
    */
   public async attachUpstreamsAsync(session: Session, configs: MCPConfig[]): Promise<void> {
-    for (const config of configs) {
-      try {
-        await session.attachUpstream(config);
-      } catch (error: any) {
+    const results = await Promise.allSettled(
+      configs.map((config) => session.attachUpstream(config))
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.status === "rejected") {
         logger.error({
           sessionId: session.id,
-          namespace: config.namespace,
-          error: error?.message || error
+          namespace: configs[i].namespace,
+          error: result.reason?.message ?? result.reason,
         }, "Failed to attach upstream");
       }
     }
+  }
+
+  /**
+   * Change the loading strategy on an active session.
+   * Takes effect immediately for any subsequent upstream-attach calls
+   * (e.g. triggered by middleware dynamic composition).
+   */
+  public setSessionLoadingStrategy(sessionId: string, strategy: LoadingStrategy): boolean {
+    const session = this.sessions[sessionId];
+    if (!session) return false;
+    session.setLoadingStrategy(strategy);
+    return true;
+  }
+
+  /**
+   * Add a middleware to an active session at runtime.
+   */
+  public addMiddlewareToSession(sessionId: string, middleware: BundlerMiddleware): boolean {
+    const session = this.sessions[sessionId];
+    if (!session) return false;
+    session.addMiddleware(middleware);
+    return true;
+  }
+
+  /**
+   * Remove a middleware from an active session by name.
+   */
+  public removeMiddlewareFromSession(sessionId: string, middlewareName: string): boolean {
+    const session = this.sessions[sessionId];
+    if (!session) return false;
+    return session.removeMiddleware(middlewareName);
   }
 
   /**

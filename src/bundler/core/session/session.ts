@@ -44,6 +44,9 @@ import {
 import logger from "../../../shared/utils/logger.js";
 import { UpstreamConnectionPool } from "../upstream/upstream-connector-pool.js";
 import { IConnectorFactory } from "../upstream/upstream-connector-factory.js";
+import { LoadingStrategy } from "../loading/loading-strategy.js";
+import { BundlerMiddleware, MiddlewareContext } from "../middleware/bundler-middleware.js";
+import { MiddlewareChain } from "../middleware/middleware-chain.js";
 
 /**
  * Operation types for resumption token tracking
@@ -100,6 +103,11 @@ export class Session extends EventEmitter {
     // Configurable upstream request timeout (default 30 seconds)
     private readonly upstreamTimeoutMs: number = 30000;
 
+    private loadingStrategy: LoadingStrategy = LoadingStrategy.PROGRESSIVE;
+    private availableUpstreams: MCPConfig[] = [];
+    private readonly middlewareChain: MiddlewareChain = new MiddlewareChain();
+    private _middlewareContext: MiddlewareContext | null = null;
+
     constructor(
         id: string,
         bundleId: string,
@@ -132,15 +140,91 @@ export class Session extends EventEmitter {
      * Routes can listen to these events and forward to the client transport.
      */
     private setupNotificationForwarding(): void {
-        this.eventCoordinator.on(UPSTREAM_EVENTS.TOOLS_LIST_CHANGED, (notification) => {
+        // The UpstreamEventCoordinator debounces upstream events and re-emits them
+        // under the "notify_*" names (not the raw UPSTREAM_EVENTS names). Listen
+        // to those debounced events and forward them to the session's NOTIFY_* events.
+        this.eventCoordinator.on("notify_tools_changed", (notification) => {
             this.emit(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, notification);
         });
-        this.eventCoordinator.on(UPSTREAM_EVENTS.RESOURCES_LIST_CHANGED, (notification) => {
+        this.eventCoordinator.on("notify_resources_changed", (notification) => {
             this.emit(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, notification);
         });
-        this.eventCoordinator.on(UPSTREAM_EVENTS.PROMPTS_LIST_CHANGED, (notification) => {
+        this.eventCoordinator.on("notify_prompts_changed", (notification) => {
             this.emit(SESSION_EVENTS.NOTIFY_PROMPTS_CHANGED, notification);
         });
+    }
+
+    /**
+     * Emit list-changed notifications for all capability types.
+     * Called after a new upstream connects (PROGRESSIVE mode) or when middleware
+     * reshapes the visible tool set.
+     */
+    emitListChanged(): void {
+        this.emit(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, {});
+        this.emit(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, {});
+        this.emit(SESSION_EVENTS.NOTIFY_PROMPTS_CHANGED, {});
+    }
+
+
+    // Loading Strategy
+
+    setLoadingStrategy(strategy: LoadingStrategy): void {
+        this.loadingStrategy = strategy;
+        logger.debug({ sessionId: this.id, strategy }, "Loading strategy updated");
+    }
+
+    getLoadingStrategy(): LoadingStrategy {
+        return this.loadingStrategy;
+    }
+
+
+    // Available Upstreams Catalog (full bundle, attached and unattached)
+    setAvailableUpstreams(configs: MCPConfig[]): void {
+        this.availableUpstreams = configs;
+    }
+
+    // Middleware Management
+    addMiddleware(middleware: BundlerMiddleware): void {
+        this.middlewareChain.add(middleware);
+        logger.debug({ sessionId: this.id, middleware: middleware.name }, "Middleware added");
+    }
+
+    removeMiddleware(name: string): boolean {
+        const removed = this.middlewareChain.remove(name);
+        if (removed) {
+            logger.debug({ sessionId: this.id, middleware: name }, "Middleware removed");
+        }
+        return removed;
+    }
+
+    getMiddlewareNames(): string[] {
+        return this.middlewareChain.getNames();
+    }
+
+    /**
+     * Build (and memoize) a MiddlewareContext bound to this session.
+     * The context exposes the session control plane to middleware: attach/detach
+     * upstreams, fire notifications, and inspect the bundle catalog.
+     */
+    getMiddlewareContext(): MiddlewareContext {
+        if (this._middlewareContext) return this._middlewareContext;
+
+        const session = this;
+        this._middlewareContext = {
+            get sessionId() { return session.id; },
+            get bundleId() { return session.bundleId; },
+
+            notifyToolsChanged: () => session.emit(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, {}),
+            notifyResourcesChanged: () => session.emit(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, {}),
+            notifyPromptsChanged: () => session.emit(SESSION_EVENTS.NOTIFY_PROMPTS_CHANGED, {}),
+
+            attachUpstream: (config: MCPConfig) => session.attachUpstream(config),
+            detachUpstream: (namespace: string) => session.detachUpstream(namespace),
+
+            getAttachedNamespaces: () => Array.from(session.upstreams.keys()),
+            getAvailableUpstreams: () => [...session.availableUpstreams],
+        };
+        return this._middlewareContext;
     }
 
     /**
@@ -191,10 +275,7 @@ export class Session extends EventEmitter {
         return session;
     }
 
-    // =========================================================================
     // Upstream Management
-    // =========================================================================
-
     async attachUpstream(config: MCPConfig): Promise<void> {
         if (this._state === SessionState.Terminated) {
             throw new Error("Cannot attach upstream to terminated session");
@@ -242,6 +323,16 @@ export class Session extends EventEmitter {
         this.recordActivity();
         this.addDomainEvent(createUpstreamConnected(this.id, config.namespace, config.url));
         logger.info({ sessionId: this.id, namespace: config.namespace, url: config.url }, "Upstream attached");
+
+        // In PROGRESSIVE mode notify the client immediately so it can refresh
+        // its tool list without waiting for all upstreams to connect.
+        if (this.loadingStrategy === LoadingStrategy.PROGRESSIVE) {
+            this.emitListChanged();
+        }
+
+        // Inform middleware so it can react (e.g. LLM router can include this
+        // upstream's tools in its next ranking pass).
+        await this.middlewareChain.onUpstreamAttached(config.namespace, this.getMiddlewareContext());
     }
 
     detachUpstream(namespace: string): void {
@@ -267,9 +358,7 @@ export class Session extends EventEmitter {
         logger.debug({ sessionId: this.id, upstreamCount: this.upstreams.size }, "Session connect called");
     }
 
-    // =========================================================================
     // MCP Aggregation Operations
-    // =========================================================================
 
     /**
      * Collect tools from all upstreams.
@@ -305,7 +394,8 @@ export class Session extends EventEmitter {
         }
 
         this.recordActivity();
-        return { tools: allTools };
+        const filtered = await this.middlewareChain.transformToolList(allTools, this.getMiddlewareContext());
+        return { tools: filtered };
     }
 
     /**
@@ -315,12 +405,24 @@ export class Session extends EventEmitter {
     async callTool(params: CallToolRequest["params"]): Promise<CallToolResult> {
         this.ensureActive();
 
+        const ctx = this.getMiddlewareContext();
+
+        // Middleware-owned tools (e.g. bundler__set_context) are handled here before
+        // any upstream routing. First non-null result short-circuits the call.
+        const ownResult = await this.middlewareChain.handleOwnToolCall(params, ctx);
+        if (ownResult !== null) {
+            this.recordActivity();
+            return ownResult;
+        }
+
         if (!this.namespaceService) {
             return { content: [], isError: true };
         }
 
         let namespace: string | undefined;
         try {
+            await this.middlewareChain.onBeforeToolCall(params, ctx);
+
             // Extract namespace to route to correct upstream
             const extracted = this.namespaceService.extractNamespaceFromName(params.name);
             namespace = extracted.namespace;
@@ -343,7 +445,8 @@ export class Session extends EventEmitter {
 
             // Forward params with resumption support - connector handles namespace extraction and permission check
             const options = this.buildRequestOptions(namespace, "call_tool");
-            const result = await connector.callTool(params, options);
+            const rawResult = await connector.callTool(params, options);
+            const result = await this.middlewareChain.onAfterToolCall(params, rawResult, ctx);
 
             this.recordActivity();
             logger.debug({ sessionId: this.id, namespace, tool: params.name }, "Tool call completed");
@@ -553,10 +656,7 @@ export class Session extends EventEmitter {
         }
     }
 
-    // =========================================================================
     // Domain Event Management
-    // =========================================================================
-
     addDomainEvent(event: DomainEvent): void {
         this.domainEvents.push(event);
     }
@@ -569,10 +669,7 @@ export class Session extends EventEmitter {
         this.domainEvents = [];
     }
 
-    // =========================================================================
     // Lifecycle Management
-    // =========================================================================
-
     recordActivity(): void {
         this._lastActivityAt = new Date();
     }
@@ -631,6 +728,8 @@ export class Session extends EventEmitter {
 
     async close(reason: string = "client_closed"): Promise<void> {
         this.terminate(reason);
+        // Teardown middleware chain before disconnecting upstreams
+        await this.middlewareChain.teardown();
         // Detach all upstreams from event coordinator
         this.eventCoordinator.detachAll();
         // Disconnect upstreams that are not pooled
@@ -649,9 +748,7 @@ export class Session extends EventEmitter {
         this.emit(SESSION_EVENTS.SHUTDOWN);
     }
 
-    // =========================================================================
     // State Accessors
-    // =========================================================================
 
     isIdle(idleTimeoutMs: number): boolean {
         const idleTime = Date.now() - this._lastActivityAt.getTime();
@@ -681,10 +778,7 @@ export class Session extends EventEmitter {
     getEventCoordinator(): UpstreamEventCoordinator {
         return this.eventCoordinator;
     }
-
-    // =========================================================================
     // Private Helpers
-    // =========================================================================
 
     private ensureActive(): void {
         if (this._state !== SessionState.Active) {

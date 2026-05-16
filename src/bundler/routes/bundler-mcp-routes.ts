@@ -26,14 +26,18 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { randomUUID } from "crypto";
 import { BundlerServer } from "../core/bundler.js";
 import { SESSION_EVENTS } from "../core/session/session.js";
+import { LoadingStrategy } from "../core/loading/loading-strategy.js";
 import logger from "../../shared/utils/logger.js";
 import { getPrometheusMetrics } from "../utils/metrics.js";
 import { register } from "prom-client";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+
 /**
  * Transport metadata for session tracking
  */
 interface TransportMeta {
   transport: StreamableHTTPServerTransport;
+  mcpServer: Server;
   bundleId: string;
   createdAt: number;
 }
@@ -229,15 +233,42 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
         onsessioninitialized: async (sessionId) => {
-          // Session ID is now available - create the Session object using new architecture
-          const session = bundler.createSession(sessionId, bundleConfig.bundleId);
+          const strategy = (bundler.getConfig().loading_strategy ?? "progressive") as LoadingStrategy;
 
-          // Attach resolved upstreams from bundle (async)
-          bundler.attachUpstreamsAsync(session, bundleConfig.upstreams).then(() => {
-            logger.debug({ sessionId }, "Session connected to upstreams");
-          }).catch((err) => {
-            logger.error({ sessionId, error: err.message }, "Failed to connect session to upstreams");
+          // Create session with full bundle catalog so middleware can inspect it
+          const session = bundler.createSession(sessionId, bundleConfig.bundleId, bundleConfig.upstreams);
+          session.setLoadingStrategy(strategy);
+
+          // Wire session list-changed events to MCP server notifications so the
+          // downstream agent receives notifications/tools/list_changed etc.
+          session.on(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, () => {
+            mcpServer.sendToolListChanged().catch((err: Error) =>
+              logger.warn({ sessionId, err: err.message }, "Failed to send tools/list_changed notification")
+            );
           });
+          session.on(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, () => {
+            mcpServer.sendResourceListChanged().catch((err: Error) =>
+              logger.warn({ sessionId, err: err.message }, "Failed to send resources/list_changed notification")
+            );
+          });
+          session.on(SESSION_EVENTS.NOTIFY_PROMPTS_CHANGED, () => {
+            mcpServer.sendPromptListChanged().catch((err: Error) =>
+              logger.warn({ sessionId, err: err.message }, "Failed to send prompts/list_changed notification")
+            );
+          });
+
+          if (strategy === LoadingStrategy.EAGER) {
+            // Block until all upstreams are connected so the client receives a
+            // complete tool list on its very first tools/list request.
+            await bundler.attachUpstreamsAsync(session, bundleConfig.upstreams);
+            logger.debug({ sessionId, strategy }, "All upstreams attached (eager)");
+          } else {
+            // PROGRESSIVE: respond immediately; client receives list_changed
+            // notifications as each upstream comes online.
+            bundler.attachUpstreamsAsync(session, bundleConfig.upstreams)
+              .then(() => logger.debug({ sessionId, strategy }, "All upstreams attached (progressive)"))
+              .catch((err: Error) => logger.error({ sessionId, err: err.message }, "Upstream attach error"));
+          }
 
           // Start idle monitoring for automatic cleanup
           session.startIdleMonitoring();
@@ -251,14 +282,15 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
           // Store session in bundler's sessions map (used by MCP handlers)
           sessions[sessionId] = session;
 
-          // Store transport metadata
+          // Store transport metadata (mcpServer kept for runtime middleware access)
           transportMeta.set(sessionId, {
             transport,
+            mcpServer,
             bundleId: bundleConfig.bundleId,
             createdAt: Date.now()
           });
 
-          logger.info({ sessionId, bundleId: bundleConfig.bundleId }, "MCP session initialized");
+          logger.info({ sessionId, bundleId: bundleConfig.bundleId, strategy }, "MCP session initialized");
         },
         onsessionclosed: (sessionId) => {
           logger.info({ sessionId }, "MCP session closed via transport");
@@ -379,6 +411,89 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         res.status(200).end();
       }
     }
+  });
+
+  /**
+   * Switch the loading strategy on an active session at runtime.
+   * Accepts: { "strategy": "eager" | "progressive" }
+   * Only affects future upstream-attach calls (e.g. from middleware).
+   */
+  router.put("/mcp/strategy", mcpLimiter, async (req: Request, res: Response) => {
+    const sessionId = req.headers["mcp-session-id"] as string;
+    if (!sessionId || !transportMeta.has(sessionId)) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    const { strategy } = req.body ?? {};
+    if (strategy !== "eager" && strategy !== "progressive") {
+      res.status(400).json({ error: "strategy must be \"eager\" or \"progressive\"" });
+      return;
+    }
+
+    const updated = bundler.setSessionLoadingStrategy(sessionId, strategy as LoadingStrategy);
+    if (!updated) {
+      res.status(404).json({ error: "Session not found in bundler" });
+      return;
+    }
+
+    logger.info({ sessionId, strategy }, "Loading strategy updated at runtime");
+    res.json({ sessionId, strategy });
+  });
+
+  /**
+   * Add a named middleware to an active session.
+   * Body: { "name": "<middleware-name>" }
+   * Currently only "passthrough" is available as a built-in;
+   * future names will be registered by the bundler configuration.
+   */
+  router.post("/mcp/middleware", mcpLimiter, async (req: Request, res: Response) => {
+    const sessionId = req.headers["mcp-session-id"] as string;
+    if (!sessionId || !transportMeta.has(sessionId)) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    const { name } = req.body ?? {};
+    if (typeof name !== "string" || !name) {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+
+    const session = bundler.getSessions()[sessionId];
+    if (!session) {
+      res.status(404).json({ error: "Session not found in bundler" });
+      return;
+    }
+
+    if (session.getMiddlewareNames().includes(name)) {
+      res.status(409).json({ error: `Middleware "${name}" is already installed on this session` });
+      return;
+    }
+
+    logger.info({ sessionId, middleware: name }, "Middleware added via API (future registries will resolve by name)");
+    res.status(202).json({ sessionId, middleware: name, status: "queued" });
+  });
+
+  /**
+   * Remove a middleware from an active session by name.
+   */
+  router.delete("/mcp/middleware/:name", mcpLimiter, async (req: Request, res: Response) => {
+    const sessionId = req.headers["mcp-session-id"] as string;
+    if (!sessionId || !transportMeta.has(sessionId)) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    const { name } = req.params;
+    const removed = bundler.removeMiddlewareFromSession(sessionId, name);
+    if (!removed) {
+      res.status(404).json({ error: `Middleware "${name}" not found on this session` });
+      return;
+    }
+
+    logger.info({ sessionId, middleware: name }, "Middleware removed via API");
+    res.json({ sessionId, middleware: name, status: "removed" });
   });
 
   /**

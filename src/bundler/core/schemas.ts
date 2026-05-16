@@ -39,7 +39,9 @@ export const BundlerConfigSchema = z.object({
 
     concurrency: ConcurrencySchema
         .optional()
-        .default(ConcurrencySchema.parse({}))
+        .default(ConcurrencySchema.parse({})),
+
+    loading_strategy: z.enum(["eager", "progressive"]).default("progressive"),
 });
 
 /**
