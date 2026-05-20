@@ -15,8 +15,8 @@
  */
 
 import { PrismaClient, AuthStrategy, MCPAuthConfig, MCPAuthConfigSchema, Mcp } from "../../../shared/domain/entities.js";
-import { Bundle, MCPConfig } from "../schemas.js";
-import { McpCredentialRepository, BundleRepository, BundleTokenRepository, McpRepository } from "../../../shared/infra/repository/index.js";
+import { Bundle, BundleRouterConfig, BundleRouterConfigSchema, MCPConfig } from "../schemas.js";
+import { BundleRepository, BundleTokenRepository, McpRepository, SubscriptionRepository, LlmProviderRepository } from "../../../shared/infra/repository/index.js";
 import { decryptJSON, hashApiKey } from "../../../shared/utils/encryption.js";
 import logger from "../../../shared/utils/logger.js";
 import { BundleWithMcpsAndCreator } from "../../../shared/infra/repository/BundleRepository.js";
@@ -38,8 +38,9 @@ export interface WildcardBundleConfig {
 export class DBBundleResolver implements ResolverService {
   private bundleRepo: BundleRepository;
   private tokenRepo: BundleTokenRepository;
-  private mcpCredRepo: McpCredentialRepository;
   private mcpRepo: McpRepository;
+  private subscriptionRepo: SubscriptionRepository;
+  private llmProviderRepo: LlmProviderRepository;
   private prisma: PrismaClient;
   private wildcardAuth?: WildcardBundleConfig;
 
@@ -47,8 +48,9 @@ export class DBBundleResolver implements ResolverService {
     this.prisma = prisma;
     this.bundleRepo = new BundleRepository(prisma);
     this.tokenRepo = new BundleTokenRepository(prisma);
-    this.mcpCredRepo = new McpCredentialRepository(prisma);
     this.mcpRepo = new McpRepository(prisma);
+    this.subscriptionRepo = new SubscriptionRepository(prisma);
+    this.llmProviderRepo = new LlmProviderRepository(prisma);
     this.wildcardAuth = wildcardAuth;
   }
 
@@ -119,7 +121,8 @@ export class DBBundleResolver implements ResolverService {
       return {
         bundleId: "",
         name: "all",
-        upstreams: mcpConfigs
+        upstreams: mcpConfigs,
+        router: undefined,
       }
     }
 
@@ -155,10 +158,44 @@ export class DBBundleResolver implements ResolverService {
       "Successfully resolved bundle from token"
     );
 
+    // Resolve credentials: subscription-level blob takes precedence over legacy per-token credentials
+    let subscriptionCredentials: Record<string, MCPAuthConfig> | undefined;
+    let subscriptionRouter: BundleRouterConfig;
+
+    if (tokenRecord.subscriptionId) {
+      const sub = await this.subscriptionRepo.findById(tokenRecord.subscriptionId);
+      if (sub?.credentials) {
+        subscriptionCredentials = this.subscriptionRepo.decryptCredentials(sub.credentials);
+      }
+      subscriptionRouter = sub?.router ? this.parseRouterConfig(sub.router) : undefined;
+    }
+
+    // Token-level router overrides subscription router
+    let router = this.parseRouterConfig(tokenRecord.router ?? null) ?? subscriptionRouter;
+
+    // Resolve registry LLM config for the router model if the token owner is known
+    if (router?.model && router.model !== "allpass" && tokenRecord.createdById) {
+      const llmConfig = await this.llmProviderRepo.resolveForUser(router.model, tokenRecord.createdById);
+      if (llmConfig) {
+        router = { ...router, llm: llmConfig };
+      }
+    }
+
     return {
       bundleId: bundle.id,
       name: bundle.name,
-      upstreams: await this.transformToBundle(bundle.mcps, tokenRecord.id)
+      upstreams: await this.transformToBundle(bundle.mcps, subscriptionCredentials),
+      router,
+    }
+  }
+
+  private parseRouterConfig(raw: string | null): BundleRouterConfig {
+    if (!raw) return undefined;
+    try {
+      return BundleRouterConfigSchema.parse(JSON.parse(raw));
+    } catch {
+      logger.warn("BundleAccessToken.router contains invalid JSON - ignoring");
+      return undefined;
     }
   }
 
@@ -166,19 +203,18 @@ export class DBBundleResolver implements ResolverService {
    * Transform database bundle to application Bundle with resolved auth
    *
    * Resolves authentication configuration for each MCP based on its authStrategy:
-   * - MASTER: Uses masterAuth from the MCP record (decrypted)
-   * - USER_SET: Looks up credentials from BundledMcpCredential by tokenId + mcpId
+   * - MASTER: Shared credentials from the MCP record (decrypted from masterAuth)
+   * - USER_SET: Per-namespace credentials from the subscription blob; MCPs with
+   *             no matching credential entry are excluded from the bundle
    * - NONE: No authentication required
    *
-   * MCPs with USER_SET strategy that are missing credentials are excluded from the bundle.
-   *
    * @param dbBundle - Database bundle with nested MCPs
-   * @param tokenId - Token ID for USER_SET credential lookup
+   * @param subscriptionCredentials - Decrypted credential map from Subscription.credentials
    * @returns Application Bundle with resolved upstreams
    */
   private async transformToBundle(
     dbBundle: BundleWithMcpsAndCreator["mcps"],
-    tokenId: string
+    subscriptionCredentials?: Record<string, MCPAuthConfig>
   ): Promise<MCPConfig[]> {
     const upstreams: MCPConfig[] = [];
 
@@ -200,13 +236,12 @@ export class DBBundleResolver implements ResolverService {
           break;
 
         case AuthStrategy.USER_SET:
-          const credential = await this.mcpCredRepo.findByTokenAndMcp(tokenId, mcp.id);
-          if (credential) {
-            auth = this.mcpCredRepo.decryptAuth(credential.authConfig);
+          if (subscriptionCredentials?.[mcp.namespace]) {
+            auth = subscriptionCredentials[mcp.namespace];
           } else {
             logger.warn(
-              { mcpId: mcp.id, namespace: mcp.namespace, tokenId },
-              "USER_SET MCP missing credentials - excluding from bundle"
+              { mcpId: mcp.id, namespace: mcp.namespace },
+              "USER_SET MCP has no subscription credential - excluding from bundle"
             );
             continue;
           }
@@ -235,7 +270,6 @@ export class DBBundleResolver implements ResolverService {
 
       upstreams.push(config);
     }
-    console.log(upstreams);
     return upstreams;
   }
 }

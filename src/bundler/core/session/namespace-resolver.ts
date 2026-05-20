@@ -105,22 +105,17 @@ export class NamespaceResolver implements INamespaceService {
      * Used for resources and resource templates.
      */
     public extractNamespaceFromUri(uri: string): { namespace: string | undefined; address: string } {
-        try {
-            const url = new URL(uri, "http://dummy");
-            const namespace = url.searchParams.get("namespace") || undefined;
-            url.searchParams.delete("namespace");
+        const url = new URL(uri, "http://dummy");
+        const namespace = url.searchParams.get("namespace") || undefined;
+        url.searchParams.delete("namespace");
 
-            // Remove the dummy base if it was added
-            let address = url.toString();
-            if (address.startsWith("http://dummy")) {
-                address = address.replace("http://dummy", "");
-            }
-
-            return { namespace, address };
-        } catch {
-            // If URL parsing fails, return as-is without namespace
-            return { namespace: undefined, address: uri };
+        // Remove the dummy base if it was added
+        let address = url.toString();
+        if (address.startsWith("http://dummy")) {
+            address = address.replace("http://dummy", "");
         }
+
+        return { namespace, address };
     }
 
     /**
@@ -135,8 +130,6 @@ export class NamespaceResolver implements INamespaceService {
             case ToolNameHashMode.THRESHOLD:
                 const fullName = `${namespace}${this.separator}${tool.name}`;
                 return fullName.length > this.hashThreshold;
-            default:
-                return false;
         }
     }
 

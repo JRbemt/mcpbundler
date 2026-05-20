@@ -1,8 +1,7 @@
 /**
- * Shared test fixtures for MCPBundler tests
+ * Shared test fixtures for tests
  *
- * Provides reusable test data objects including MCPConfig instances,
- * MCP SDK types (Tool, Resource, Prompt), and common test values.
+ * Provides reusable test data objects including
  */
 
 import type { Tool, Resource, ResourceTemplate, Prompt } from "@modelcontextprotocol/sdk/types.js";
@@ -29,11 +28,6 @@ export function createTool(overrides: Partial<Tool> = {}): Tool {
     },
     ...overrides,
   };
-}
-
-export function createToolWithLongName(namespace: string): Tool {
-  const longName = "a_very_long_tool_name_that_exceeds_the_threshold_limit_for_hashing";
-  return createTool({ name: longName });
 }
 
 // -- Resources --

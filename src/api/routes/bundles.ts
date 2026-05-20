@@ -32,6 +32,7 @@ import { validatedHandler, sendNotFound, sendForbidden, validatedBodyHandler } f
 import { MCPResponseSchema, McpResponse } from "./utils/mcp-schemas.js";
 import {
   CreateBundleRequestSchema,
+  UpdateBundleRequestSchema,
   GenerateTokenRequestSchema,
   AddMcpsByNamespaceRequestSchema,
   BundleResponseSchema,
@@ -45,6 +46,7 @@ import {
   ListTokenResponse,
   AddMcpByNamespaceResponse,
   CreateBundleRequest,
+  UpdateBundleRequest,
   GenerateTokenRequest,
   AddMcpsByNamespaceRequest,
 } from "./utils/bundle-schemas.js";
@@ -77,6 +79,7 @@ function toBundleResponse(bundle: BundleWithMcpsAndCreator): BundleResponse {
 // Re-export types for backwards compatibility
 export type {
   CreateBundleRequest,
+  UpdateBundleRequest,
   GenerateTokenRequest,
   AddMcpsByNamespaceRequest,
   CreateBundleResponse,
@@ -203,6 +206,51 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
         getAuditDetails: (_req, result) => ({
           bundleId: result?.id,
         }),
+      }
+    )
+  );
+
+  /**
+   * PATCH /api/bundles/:id
+   * Update bundle metadata (description)
+   */
+  router.patch(
+    "/:id",
+    ...validatedBodyHandler(
+      UpdateBundleRequestSchema,
+      CreateBundleResponseSchema,
+      async (req: Request<{ id: string }>, res, data: UpdateBundleRequest) => {
+        const bundle = await bundleRepo.findById(req.params.id);
+        if (!bundle) {
+          return sendNotFound(res, "Bundle", req, AuditApiAction.BUNDLE_UPDATE, {
+            bundleId: req.params.id,
+          });
+        }
+
+        if (!(await userRepo.isAuthorized(req.apiAuth!.userId, bundle))) {
+          return sendForbidden(
+            res,
+            req,
+            AuditApiAction.BUNDLE_UPDATE,
+            "You can only modify bundles you created or that were created by users you created",
+            { bundleId: req.params.id }
+          );
+        }
+
+        const updated = await bundleRepo.update({ id: req.params.id, ...data });
+        logger.info({ bundleId: req.params.id }, "Updated bundle");
+        return {
+          id: updated.id,
+          name: updated.name,
+          description: updated.description,
+          createdAt: updated.createdAt,
+          createdBy: bundle.createdBy,
+        };
+      },
+      {
+        action: AuditApiAction.BUNDLE_UPDATE,
+        errorMessage: "Failed to update bundle",
+        getAuditDetails: (req) => ({ bundleId: req.params.id }),
       }
     )
   );

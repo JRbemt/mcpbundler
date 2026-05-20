@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   encrypt,
   decrypt,
@@ -8,6 +8,8 @@ import {
   generateApiKey,
   hashApiKey,
   isValidApiKeyFormat,
+  getEncryptionKey,
+  validateEncryptionKey,
   API_KEY_PREFIX,
 } from "../../../src/shared/utils/encryption.js";
 
@@ -149,6 +151,45 @@ describe("hashApiKey", () => {
     const hash = hashApiKey("mcpb_test_key");
     expect(hash).toHaveLength(64);
     expect(/^[0-9a-f]+$/.test(hash)).toBe(true);
+  });
+});
+
+describe("getEncryptionKey", () => {
+  const saved = process.env.ENCRYPTION_KEY;
+  afterEach(() => { process.env.ENCRYPTION_KEY = saved; });
+
+  it("throws when ENCRYPTION_KEY is not set", () => {
+    delete process.env.ENCRYPTION_KEY;
+    expect(() => getEncryptionKey()).toThrow(/ENCRYPTION_KEY/);
+  });
+
+  it("returns a 32-byte buffer for a valid key", () => {
+    process.env.ENCRYPTION_KEY = "a-valid-key-that-is-at-least-32-chars!";
+    const key = getEncryptionKey();
+    expect(key).toBeInstanceOf(Buffer);
+    expect(key.length).toBe(32);
+  });
+
+  it("still returns a key when key is shorter than MIN_KEY_LENGTH (just warns)", () => {
+    process.env.ENCRYPTION_KEY = "short";
+    const key = getEncryptionKey();
+    expect(key).toBeInstanceOf(Buffer);
+    expect(key.length).toBe(32);
+  });
+});
+
+describe("validateEncryptionKey", () => {
+  const saved = process.env.ENCRYPTION_KEY;
+  afterEach(() => { process.env.ENCRYPTION_KEY = saved; });
+
+  it("returns true when ENCRYPTION_KEY is set", () => {
+    process.env.ENCRYPTION_KEY = "a-valid-key-that-is-at-least-32-chars!";
+    expect(validateEncryptionKey()).toBe(true);
+  });
+
+  it("returns false when ENCRYPTION_KEY is not set", () => {
+    delete process.env.ENCRYPTION_KEY;
+    expect(validateEncryptionKey()).toBe(false);
   });
 });
 

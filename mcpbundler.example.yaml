@@ -1,70 +1,219 @@
 # MCP Bundler - YAML configuration example
 #
-# Set YAML_CONFIG=./mcpbundler.yaml in .env to activate this mode.
-# No database or ENCRYPTION_KEY is required.
+# Set YAML_CONFIG=./mcpbundler.yaml in .env to activate YAML mode.
 #
 # Secrets (tokens, API keys) belong in .env and are referenced here
-# with ${VAR_NAME} syntax. Interpolation happens at startup.
+# with ${VAR_NAME} syntax. Interpolation happens after YAML parsing so
+# env var values cannot corrupt the YAML structure.
+#
+# CONFIGURATION BLOCKS
+#
+#   definitions   - shared named resources: registries, MCPs, LLM providers
+#   bundles       - bundles you author and publish to a registry
+#   subscriptions - named subscriptions; holds credentials and router config
+#
+# WORKFLOW
+#
+#   1. Fill in definitions (registries, mcps, llms)
+#   2. Define your bundles and which registries to sync them to
+#   3. Add subscriptions with credentials for USER_SET MCPs
+#   4. Run `mcpbundler sync --token <mgmt-token>` to push everything
+#   5. Run `mcpbundler token <subscription-name>` to generate an access token
+#   6. Place the token in the Authorization header of your AI client MCP config
 
-# Named MCP definitions = reusable across bundles via `ref`.
-# You can also define MCPs inline inside a bundle (see below).
-mcps:
-  github:
-    url: "https://github-mcp.example.com/mcp"
-    stateless: true
-    auth:
-      method: bearer
-      token: "${GITHUB_TOKEN}"
-    description: "GitHub MCP server"
 
-  filesystem:
-    url: "http://localhost:3001"
-    stateless: false
-    auth:
-      method: none
+definitions:
 
-  jira:
-    url: "https://jira-mcp.example.com/mcp"
-    auth:
-      method: api_key
-      key: "${JIRA_API_KEY}"
-      header: "X-API-Token"
+  # Named registry connections (mcpbundler.com or self-hosted)
+  registries:
+    - name: cloud
+      url: "https://mcpbundler.com"
+      auth:
+        method: oauth2
+        flow: authorization_code          # browser login on `mcpbundler sync`
+
+    - name: local
+      url: "http://192.168.1.10:8080"
+      auth:
+        method: bearer
+        token: "${LOCAL_REGISTRY_TOKEN}"
+
+  # Shared MCP declarations reusable via ref: inside bundle blocks.
+  # Two forms:
+  #   inline  - namespace + url (sync creates or updates on the target registry)
+  #   external - namespace + registry (already exists on a named registry)
+  mcps:
+    - namespace: github
+      url: "https://github-mcp.example.com/mcp"
+      stateless: true
+      description: "GitHub repository management - PRs, issues, commits, code search"
+      auth:
+        method: bearer
+        token: "${GITHUB_MASTER_TOKEN}"
+
+    - namespace: filesystem
+      url: "http://localhost:3001"
+      stateless: false
+      description: "Local filesystem read/write access"
+      auth:
+        method: none
+
+    - namespace: jira
+      url: "https://jira-mcp.example.com/mcp"
+      description: "Jira issue tracking - create, update, search issues and projects"
+      auth:
+        method: api_key
+        key: "${JIRA_MASTER_API_KEY}"
+        header: "X-API-Token"
+
+    - namespace: stripe
+      url: "https://stripe-mcp.example.com/mcp"
+      description: "Stripe payment processing - charges, subscriptions, invoices, customers"
+      auth:
+        method: bearer
+        token: "${STRIPE_MASTER_TOKEN}"
+
+    # External MCP - exists on the cloud registry, not managed here
+    - namespace: bloomberg
+      registry: cloud
+
+  # Bind your personal API key to a registry-managed LLM provider (claude, chatgpt, gemini).
+  # Run `mcpbundler sync` to push these bindings to the registry.
+  # The registry stores keys encrypted per user and injects them at resolve time when a
+  # subscription references that provider via router.model.
+  llm_bindings:
+    - provider: claude
+      api_key: "${ANTHROPIC_API_KEY}"
+    - provider: chatgpt
+      api_key: "${OPENAI_API_KEY}"
+    - provider: gemini
+      api_key: "${GEMINI_API_KEY}"
+
+  # LLM providers for tool router middleware (self-hosted / local models only).
+  # For cloud providers (claude, chatgpt, gemini) use llm_bindings above instead.
+  # type: openai-compatible covers Ollama (local) and any OpenAI-compatible cloud endpoint.
+  llms:
+    - name: gemma
+      type: openai-compatible
+      model: gemma3:4b
+      endpoint: "http://localhost:11434/v1"
+      temperature: 0.1
+      max_tokens: 256
+
+    - name: llama
+      type: openai-compatible
+      model: llama3.2:3b
+      endpoint: "http://localhost:11434/v1"
+      temperature: 0.1
+      max_tokens: 256
+
+    - name: openai
+      type: openai-compatible
+      model: gpt-4o-mini
+      endpoint: "https://api.openai.com/v1"
+      api_key: "${OPENAI_API_KEY}"
+      max_tokens: 512
+
 
 bundles:
-  - name: "Developer Bundle"
-    token: "${DEV_BUNDLE_TOKEN}"       # Token value is resolved from .env
-    mcps:
-      - ref: github                    # References the named MCP above
-        permissions:
-          allowedTools: ["*"]
-          allowedResources: ["*"]
-          allowedPrompts: ["*"]
+  # auth_strategy per MCP:
+  #   MASTER   - bundler uses the shared auth defined in definitions.mcps above
+  #   USER_SET - each subscriber must provide their own credential in their subscription
+  #   NONE     - no authentication required
 
-      - ref: filesystem
-        permissions:
-          allowedTools: ["read_file", "list_directory", "write_file"]
-
-      - ref: jira
-        permissions:
-          allowedTools: ["get_issue", "search_issues", "create_issue"]
-
-      - namespace: notion              # Inline MCP = no top-level ref needed
-        url: "https://notion-mcp.example.com/mcp"
-        auth:
-          method: bearer
-          token: "${NOTION_TOKEN}"
-        permissions:
-          allowedTools: ["*"]
-
-  - name: "Read-Only Bundle"
-    token: "${READONLY_BUNDLE_TOKEN}"
+  - name: developer-tools
+    sync_to:
+      - registry: cloud
+      - registry: local
     mcps:
       - ref: github
-        permissions:
-          allowedTools: ["get_file", "list_files", "search_code"]
-          allowedResources: ["*"]
-          allowedPrompts: []
+        auth_strategy: MASTER
 
       - ref: filesystem
+        auth_strategy: NONE
+
+      - ref: jira
+        auth_strategy: USER_SET           # each subscriber provides their own key
+
+      - namespace: notion
+        url: "https://notion-mcp.example.com/mcp"
+        description: "Notion workspace - pages, databases, blocks"
+        auth_strategy: USER_SET           # inline MCP, user-provided auth
+
+  - name: finsec-bundle
+    sync_to:
+      - registry: cloud
+    mcps:
+      - ref: stripe
+        auth_strategy: USER_SET
+
+      - namespace: bloomberg
+        registry: cloud
+        auth_strategy: USER_SET
+
+      - namespace: market-data
+        url: "https://marketdata-mcp.example.com/mcp"
+        description: "Real-time and historical market data feeds"
+        auth_strategy: NONE
+
+
+subscriptions:
+  # Your own published bundle - bind credentials and router config
+  - name: dev-subscription
+    bundle: myorg/developer-tools
+    registry: cloud
+    credentials:
+      jira:
+        auth:
+          method: api_key
+          key: "${MY_JIRA_API_KEY}"
+          header: "X-API-Token"
         permissions:
-          allowedTools: ["read_file", "list_directory"]
+          allowed_tools: ["get_issue", "search_issues", "create_issue"]
+          allowed_resources: ["*"]
+          allowed_prompts: ["*"]
+      notion:
+        auth:
+          method: bearer
+          token: "${MY_NOTION_TOKEN}"
+    router:
+      model: gemma
+      set_context:
+        enabled: true
+        max_active_upstreams: 6
+      rolling_window:
+        enabled: true
+        max_active_upstreams: 6
+        window_size: 10
+        re_rank_every_n_calls: 5
+
+  # A curated bundle published by someone else
+  - name: finsec-subscription
+    bundle: finsec/best-of-finsec@2.1.0
+    registry: cloud
+    credentials:
+      stripe:
+        auth:
+          method: bearer
+          token: "${MY_STRIPE_TOKEN}"
+        permissions:
+          allowed_tools: ["create_payment", "list_invoices", "get_balance"]
+          allowed_resources: ["*"]
+          allowed_prompts: ["*"]
+      bloomberg:
+        auth:
+          method: api_key
+          key: "${MY_BLOOMBERG_KEY}"
+          header: "X-Bloomberg-Auth"
+    router:
+      model: gemma
+      set_context:
+        enabled: true
+        max_active_upstreams: 8
+
+  # Minimal subscription - no credentials needed (all MCPs are MASTER or NONE auth)
+  - name: readonly-subscription
+    bundle: myorg/developer-tools
+    registry: local
+    router:
+      model: allpass

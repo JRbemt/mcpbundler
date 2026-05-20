@@ -1,5 +1,5 @@
 import { BundlerAPIClient } from "../../../utils/api-client.js";
-import { banner, BG_COLORS } from "../../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS } from "../../../utils/print-utils.js";
 
 interface ShowOptions {
   token?: string;
@@ -23,15 +23,14 @@ export async function showCommand(userId: string, options: ShowOptions): Promise
 
     if (result.permissions.length > 0) {
       console.log(`Permissions (${result.permissions.length}):`);
-      const tableData = result.permissions.map((perm, index) => ({
-        "#": index + 1,
+      autoTable(result.permissions.map((perm, index) => ({
+        "#": String(index + 1),
         Permission: perm,
-      }));
-      console.table(tableData);
+      })));
     } else {
       console.log("No permissions assigned.");
     }
-    console.groupEnd()
+    console.groupEnd();
     console.log()
 
   } catch (error: any) {

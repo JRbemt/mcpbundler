@@ -1,13 +1,13 @@
-import { CallToolRequest, CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
-import { BundlerMiddleware, MiddlewareContext } from "./bundler-middleware.js";
+import { CallToolRequest, CallToolResult, Prompt, Resource, Tool } from "@modelcontextprotocol/sdk/types.js";
+import { BundlerMiddleware, MiddlewareContext } from "./middleware.js";
 import logger from "../../../shared/utils/logger.js";
 
 /**
  * Ordered chain of BundlerMiddleware instances for a single session.
  *
  * Execution semantics:
- * - `transformToolList`  : sequential fold — each middleware receives the output of the previous.
- * - `handleOwnToolCall`  : first-match wins — iterates until a middleware returns non-null.
+ * - `transformToolList`  : sequential fold - each middleware receives the output of the previous.
+ * - `handleOwnToolCall`  : first-match wins - iterates until a middleware returns non-null.
  * - `onBeforeToolCall`   : all middlewares called in registration order.
  * - `onAfterToolCall`    : all middlewares called in registration order.
  * - `onUpstreamAttached` : all middlewares called in registration order.
@@ -47,6 +47,36 @@ export class MiddlewareChain {
                 logger.error(
                     { middleware: mw.name, sessionId: ctx.sessionId, err },
                     "Middleware transformToolList failed, skipping",
+                );
+            }
+        }
+        return result;
+    }
+
+    async transformResourceList(resources: Resource[], ctx: MiddlewareContext): Promise<Resource[]> {
+        let result = resources;
+        for (const mw of this.middlewares) {
+            try {
+                result = await mw.transformResourceList(result, ctx);
+            } catch (err) {
+                logger.error(
+                    { middleware: mw.name, sessionId: ctx.sessionId, err },
+                    "Middleware transformResourceList failed, skipping",
+                );
+            }
+        }
+        return result;
+    }
+
+    async transformPromptList(prompts: Prompt[], ctx: MiddlewareContext): Promise<Prompt[]> {
+        let result = prompts;
+        for (const mw of this.middlewares) {
+            try {
+                result = await mw.transformPromptList(result, ctx);
+            } catch (err) {
+                logger.error(
+                    { middleware: mw.name, sessionId: ctx.sessionId, err },
+                    "Middleware transformPromptList failed, skipping",
                 );
             }
         }

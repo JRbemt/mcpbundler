@@ -45,7 +45,7 @@ import logger from "../../../shared/utils/logger.js";
 import { UpstreamConnectionPool } from "../upstream/upstream-connector-pool.js";
 import { IConnectorFactory } from "../upstream/upstream-connector-factory.js";
 import { LoadingStrategy } from "../loading/loading-strategy.js";
-import { BundlerMiddleware, MiddlewareContext } from "../middleware/bundler-middleware.js";
+import { BundlerMiddleware, MiddlewareContext } from "../middleware/middleware.js";
 import { MiddlewareChain } from "../middleware/middleware-chain.js";
 
 /**
@@ -106,7 +106,6 @@ export class Session extends EventEmitter {
     private loadingStrategy: LoadingStrategy = LoadingStrategy.PROGRESSIVE;
     private availableUpstreams: MCPConfig[] = [];
     private readonly middlewareChain: MiddlewareChain = new MiddlewareChain();
-    private _middlewareContext: MiddlewareContext | null = null;
 
     constructor(
         id: string,
@@ -202,15 +201,13 @@ export class Session extends EventEmitter {
     }
 
     /**
-     * Build (and memoize) a MiddlewareContext bound to this session.
-     * The context exposes the session control plane to middleware: attach/detach
-     * upstreams, fire notifications, and inspect the bundle catalog.
+     * Build a MiddlewareContext bound to this session.
+     * All reads are live closures over session state so the object can be
+     * recreated cheaply on each call without staleness risk.
      */
     getMiddlewareContext(): MiddlewareContext {
-        if (this._middlewareContext) return this._middlewareContext;
-
         const session = this;
-        this._middlewareContext = {
+        return {
             get sessionId() { return session.id; },
             get bundleId() { return session.bundleId; },
 
@@ -224,7 +221,6 @@ export class Session extends EventEmitter {
             getAttachedNamespaces: () => Array.from(session.upstreams.keys()),
             getAvailableUpstreams: () => [...session.availableUpstreams],
         };
-        return this._middlewareContext;
     }
 
     /**
@@ -259,19 +255,6 @@ export class Session extends EventEmitter {
         const now = new Date();
         const session = new Session(id, bundleId, now, namespaceService, permissionService, connectorFactory, connectionPool, now, SessionState.Active);
         session.addDomainEvent(createSessionEstablished(id, bundleId));
-        return session;
-    }
-
-    static reconstitute(
-        id: string,
-        bundleId: string,
-        createdAt: Date,
-        lastActivityAt: Date,
-        state: SessionState,
-        upstreams: Map<string, IUpstreamConnector>
-    ): Session {
-        const session = new Session(id, bundleId, createdAt, null, null, null, null, lastActivityAt, state);
-        session.upstreams = upstreams;
         return session;
     }
 
@@ -348,14 +331,6 @@ export class Session extends EventEmitter {
 
     getAllUpstreams(): IUpstreamConnector[] {
         return Array.from(this.upstreams.values());
-    }
-
-    /**
-     * Connect all attached upstreams. Called after attaching upstreams.
-     */
-    async connect(): Promise<void> {
-        // Upstreams are connected in attachUpstream, this is for compatibility
-        logger.debug({ sessionId: this.id, upstreamCount: this.upstreams.size }, "Session connect called");
     }
 
     // MCP Aggregation Operations
@@ -495,7 +470,8 @@ export class Session extends EventEmitter {
         }
 
         this.recordActivity();
-        return { resources: allResources };
+        const filtered = await this.middlewareChain.transformResourceList(allResources, this.getMiddlewareContext());
+        return { resources: filtered };
     }
 
     /**
@@ -615,7 +591,8 @@ export class Session extends EventEmitter {
         }
 
         this.recordActivity();
-        return { prompts: allPrompts };
+        const filtered = await this.middlewareChain.transformPromptList(allPrompts, this.getMiddlewareContext());
+        return { prompts: filtered };
     }
 
     /**
@@ -672,13 +649,6 @@ export class Session extends EventEmitter {
     // Lifecycle Management
     recordActivity(): void {
         this._lastActivityAt = new Date();
-    }
-
-    /**
-     * Alias for recordActivity - for compatibility with old session API
-     */
-    touch(): void {
-        this.recordActivity();
     }
 
     /**

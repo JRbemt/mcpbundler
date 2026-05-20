@@ -116,10 +116,7 @@ export class McpRepository implements Repository<Mcp, "id"> {
       },
     });
 
-    return mcps.map((mcp: Mcp) => {
-      const decrypted = mcp;
-      return decrypted || mcp;
-    });
+    return mcps;
   }
 
   async update(item: Partial<Omit<Mcp, "id" | "createdAt">> & { id: string }): Promise<Mcp> {

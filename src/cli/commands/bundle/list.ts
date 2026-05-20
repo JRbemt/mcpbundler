@@ -1,5 +1,5 @@
 import { BundlerAPIClient } from "../../utils/api-client.js";
-import { banner, BG_COLORS } from "../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface BundlesOptions {
     host: string;
@@ -37,7 +37,7 @@ export async function listBundlesCommand(options: BundlesOptions): Promise<void>
             Created: new Date(bundle.createdAt).toLocaleString(),
         }));
 
-        console.table(tableData);
+        autoTable(tableData);
         console.groupEnd();
         console.log();
 

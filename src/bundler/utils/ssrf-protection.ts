@@ -38,16 +38,9 @@ const PRIVATE_IP_PATTERNS = [
 ];
 
 /**
- * Disallowed URL schemes
+ * Schemes that are always forbidden regardless of allowedSchemes - absolute blocklist.
  */
-const DISALLOWED_SCHEMES = [
-  "file",
-  "ftp",
-  "gopher",
-  "data",
-  "javascript",
-  "vbscript"
-];
+const DISALLOWED_SCHEMES = ["file", "ftp", "gopher", "data", "javascript", "vbscript"];
 
 export interface SSRFValidationResult {
   allowed: boolean;
@@ -73,27 +66,27 @@ export function validateUpstreamUrl(
   const {
     allowPrivateIPs = false,
     allowLocalhost = false,
-    allowedSchemes = ["http", "https"]
+    allowedSchemes = ["http", "https"],
   } = options;
 
   try {
     const url = new URL(urlString);
 
-    // Check scheme
-    if (!allowedSchemes.includes(url.protocol.replace(":", ""))) {
-      return {
-        allowed: false,
-        reason: `Disallowed URL scheme: ${url.protocol}. Only ${allowedSchemes.join(", ")} are permitted.`,
-        url: urlString
-      };
-    }
-
-    // Check for disallowed schemes
+    // Absolute scheme blocklist - checked before allowedSchemes so it cannot be overridden by callers.
     const scheme = url.protocol.replace(":", "");
     if (DISALLOWED_SCHEMES.includes(scheme)) {
       return {
         allowed: false,
         reason: `Forbidden URL scheme: ${url.protocol}`,
+        url: urlString
+      };
+    }
+
+    // Check scheme against caller-supplied allowlist
+    if (!allowedSchemes.includes(scheme)) {
+      return {
+        allowed: false,
+        reason: `Disallowed URL scheme: ${url.protocol}. Only ${allowedSchemes.join(", ")} are permitted.`,
         url: urlString
       };
     }

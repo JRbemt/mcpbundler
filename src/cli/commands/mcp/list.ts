@@ -1,5 +1,5 @@
 import { BundlerAPIClient } from "../../utils/api-client.js";
-import { banner, BG_COLORS } from "../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface ListOptions {
   host: string;
@@ -30,7 +30,7 @@ export async function listMcpCommand(options: ListOptions): Promise<void> {
       Created: new Date(mcp.createdAt).toLocaleString(),
     }));
 
-    console.table(tableData);
+    autoTable(tableData);
     console.groupEnd();
     console.log()
   } catch (error: any) {

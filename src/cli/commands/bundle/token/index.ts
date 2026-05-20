@@ -3,7 +3,6 @@ import { generateToken } from "./generate.js";
 import { listBundleTokensCommand } from "./list.js";
 import { revokeBundleTokenCommand } from "./revoke.js";
 import { HELP_FOOTER } from "../../../utils/print-utils.js";
-import { createCredentialsCommand } from "./credentials/index.js";
 
 
 export function createTokenCommand(): Command {
@@ -11,8 +10,6 @@ export function createTokenCommand(): Command {
         .description("manage tokens for a bundle (requires --token)")
         .showHelpAfterError()
         .showSuggestionAfterError();
-
-    command.addCommand(createCredentialsCommand())
 
     command
         .command("generate <bundle-id>")

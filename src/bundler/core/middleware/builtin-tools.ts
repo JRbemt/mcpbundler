@@ -1,5 +1,5 @@
 import { CallToolRequest, CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
-import { AbstractBundlerMiddleware, BundlerMiddleware, MiddlewareContext } from "./bundler-middleware.js";
+import { AbstractBundlerMiddleware, BundlerMiddleware, MiddlewareContext } from "./middleware.js";
 import logger from "../../../shared/utils/logger.js";
 
 /**
@@ -38,8 +38,7 @@ export interface BundlerToolDefinition {
 /**
  * Canonical registry for all first-party bundler-native tools.
  *
- * This middleware is installed alongside PassthroughMiddleware in every session.
- * Adding a new bundler tool only requires calling `registerTool` — no changes
+ * Adding a new bundler tool only requires calling `registerTool` - no changes
  * to session, BundlerServer, or route code are needed.
  *
  * Tool names should follow the `bundler__<name>` convention to avoid collisions

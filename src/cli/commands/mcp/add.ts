@@ -1,6 +1,6 @@
 import { MCPAuthConfig } from "../../../shared/domain/entities.js";
 import { BundlerAPIClient, Mcp } from "../../utils/api-client.js";
-import { banner, BG_COLORS, printTable } from "../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS, printTable } from "../../utils/print-utils.js";
 import { canFetchMcp, fetchMcpCapabilities } from "./capabilities/fetch.js";
 
 interface AddManualOptions {
@@ -88,8 +88,8 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
     const mcp = await client.createMcp(data);
 
     banner(" MCP Server Added ", { bg: BG_COLORS.GREEN });
-    console.group()
-    const tableData = [{
+    console.group();
+    autoTable([{
       Namespace: mcp.namespace,
       URL: mcp.url,
       Creator: mcp.createdBy?.name,
@@ -97,12 +97,9 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
       Stateless: mcp.stateless ? "Yes" : "No",
       "Auth Strategy": mcp.authStrategy || "NONE",
       "Master Auth": authConfig ? authConfig.method : "None",
-    }];
-
-    console.table(tableData);
-
+    }]);
     console.log(`Description: ${mcp.description}`);
-    console.groupEnd()
+    console.groupEnd();
     console.log()
 
     const can_fetch_capbalities = canFetchMcp(mcp, authConfig)

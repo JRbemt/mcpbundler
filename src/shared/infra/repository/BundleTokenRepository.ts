@@ -25,7 +25,7 @@ export class BundleTokenRepository implements Repository<BundleAccessToken, "id"
     this.client = prisma;
   }
 
-  async create(item: Omit<BundleAccessToken, "id" | "tokenHash" | "createdAt">): Promise<{
+  async create(item: Omit<BundleAccessToken, "id" | "tokenHash" | "createdAt" | "router" | "pinVersion" | "subscriptionId"> & { subscriptionId?: string | null }): Promise<{
     record: BundleAccessToken, token: string
   }> {
     const token = randomBytes(32).toString("hex");
@@ -39,10 +39,9 @@ export class BundleTokenRepository implements Repository<BundleAccessToken, "id"
   }
 
   async findFirst(field: keyof BundleAccessToken, value: unknown): Promise<BundleAccessToken | null> {
-    const record = await this.client.bundleAccessToken.findUnique({
-      where: { [field]: value },
-    } as any);
-    return record;
+    return await this.client.bundleAccessToken.findFirst({
+      where: { [field]: value } as any,
+    });
   }
 
   /**

@@ -514,7 +514,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
     return await this.client.apiUser.findMany({
       where: {
         createdById: creatorId,
-        revokedAt: includeRevoked ? null : { not: null },
+        revokedAt: includeRevoked ? undefined : null,
       },
       select: {
         id: true,

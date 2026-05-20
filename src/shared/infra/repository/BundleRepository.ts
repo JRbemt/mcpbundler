@@ -34,7 +34,7 @@ export class BundleRepository implements Repository<Bundle, "id"> {
   }
 
 
-  async create(item: Omit<Bundle, "id" | "createdAt" | "updatedAt">): Promise<{ record: CreatedBundle; }> {
+  async create(item: Omit<Bundle, "id" | "createdAt" | "updatedAt" | "isPublished" | "path" | "version">): Promise<{ record: CreatedBundle; }> {
     const record = await this.client.bundle.create({
       data: { ...item, createdAt: new Date(), updatedAt: new Date() },
       include: {
@@ -156,7 +156,7 @@ export class BundleRepository implements Repository<Bundle, "id"> {
   }
 
   async exists(id: string): Promise<boolean> {
-    return this.findById(id) !== null;
+    return (await this.findById(id)) !== null;
   }
 
   /**

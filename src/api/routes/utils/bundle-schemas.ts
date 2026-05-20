@@ -16,6 +16,10 @@ export const CreateBundleRequestSchema = z.object({
   description: z.string(),
 });
 
+export const UpdateBundleRequestSchema = z.object({
+  description: z.string().optional(),
+});
+
 export const GenerateTokenRequestSchema = z.object({
   name: z.string().min(1, "Token name is required and cannot be empty"),
   description: z.string().optional(),
@@ -91,6 +95,7 @@ export const AddMcpByNamespaceResponseSchema = z.object({
  * Type exports
  */
 export type CreateBundleRequest = z.infer<typeof CreateBundleRequestSchema>;
+export type UpdateBundleRequest = z.infer<typeof UpdateBundleRequestSchema>;
 export type GenerateTokenRequest = z.infer<typeof GenerateTokenRequestSchema>;
 export type AddMcpsByNamespaceRequest = z.infer<typeof AddMcpsByNamespaceRequestSchema>;
 

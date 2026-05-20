@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { NamespaceResolver, ToolNameHashMode } from "../../../src/bundler/core/session/namespace-resolver.js";
 import {
   createTool,
-  createToolWithLongName,
   createResource,
   createResourceTemplate,
   createPrompt,
@@ -83,7 +82,7 @@ describe("NamespaceResolver", () => {
       const shortResult = resolver.namespaceTool(NAMESPACE_GITHUB, shortTool);
       expect(shortResult.name).toBe("github__read");
 
-      const longTool = createToolWithLongName(NAMESPACE_GITHUB);
+      const longTool = createTool({ name: "a_very_long_tool_name_that_exceeds_the_threshold_limit_for_hashing" });
       const longResult = resolver.namespaceTool(NAMESPACE_GITHUB, longTool);
       expect(longResult.name).toHaveLength(12);
       expect(longResult._meta?.originalName).toBe(longTool.name);
@@ -248,6 +247,88 @@ describe("NamespaceResolver", () => {
       resolver.clearLookupTable();
 
       expect(() => resolver.extractNamespaceFromName(hashed.name)).toThrow();
+    });
+  });
+
+  describe("namespaceTool with _meta.ui", () => {
+    it("namespaces resourceUri inside _meta.ui", () => {
+      const tool = createTool({
+        name: "open_file",
+        _meta: { ui: { resourceUri: "https://example.com/res", label: "Open" } } as any,
+      });
+      const result = resolver.namespaceTool(NAMESPACE_GITHUB, tool);
+      const ui = (result._meta as any).ui;
+      expect(ui.resourceUri).toContain("namespace=github");
+      expect(ui.label).toBe("Open");
+    });
+
+    it("preserves other _meta.ui fields alongside the namespaced resourceUri", () => {
+      const tool = createTool({
+        name: "view",
+        _meta: { ui: { resourceUri: "https://api.example.com/res", icon: "eye", badge: 3 } } as any,
+      });
+      const result = resolver.namespaceTool(NAMESPACE_GITHUB, tool);
+      const ui = (result._meta as any).ui;
+      expect(ui.icon).toBe("eye");
+      expect(ui.badge).toBe(3);
+      expect(ui.resourceUri).toContain("namespace=github");
+    });
+
+    it("handles _meta.ui without resourceUri - no namespacing applied to it", () => {
+      const tool = createTool({ name: "list", _meta: { ui: { icon: "list" } } as any });
+      const result = resolver.namespaceTool(NAMESPACE_GITHUB, tool);
+      expect((result._meta as any).ui.icon).toBe("list");
+      expect((result._meta as any).ui.resourceUri).toBeUndefined();
+    });
+
+    it("tool with no _meta.ui produces no ui in result", () => {
+      const tool = createTool({ name: "plain" });
+      const result = resolver.namespaceTool(NAMESPACE_GITHUB, tool);
+      expect((result._meta as any)?.ui).toBeUndefined();
+    });
+  });
+
+  describe("THRESHOLD mode - boundary", () => {
+    it("does not hash a name exactly at the threshold", () => {
+      const threshold = 64;
+      const r = new NamespaceResolver("__", ToolNameHashMode.THRESHOLD, threshold);
+      const toolName = "a".repeat(threshold - "ns".length - "__".length);
+      const result = r.namespaceTool("ns", createTool({ name: toolName }));
+      expect(result.name).toBe(`ns__${toolName}`);
+    });
+
+    it("hashes a name one character over the threshold", () => {
+      const threshold = 64;
+      const r = new NamespaceResolver("__", ToolNameHashMode.THRESHOLD, threshold);
+      const toolName = "a".repeat(threshold - "ns".length - "__".length + 1);
+      const result = r.namespaceTool("ns", createTool({ name: toolName }));
+      expect(result.name).toHaveLength(12);
+    });
+  });
+
+  describe("custom separator", () => {
+    it("uses the custom separator for namespacing", () => {
+      const r = new NamespaceResolver("::", ToolNameHashMode.NEVER);
+      expect(r.namespaceTool("db", createTool({ name: "query" })).name).toBe("db::query");
+    });
+
+    it("extracts namespace using custom separator", () => {
+      const r = new NamespaceResolver("::", ToolNameHashMode.NEVER);
+      const { namespace, address } = r.extractNamespaceFromName("db::query");
+      expect(namespace).toBe("db");
+      expect(address).toBe("query");
+    });
+  });
+
+  describe("extractNamespaceFromUri - multiple query params", () => {
+    it("preserves other query params when removing namespace", () => {
+      const { namespace, address } = resolver.extractNamespaceFromUri(
+        "https://api.example.com/res?format=json&namespace=stripe&version=2"
+      );
+      expect(namespace).toBe("stripe");
+      expect(address).toContain("format=json");
+      expect(address).toContain("version=2");
+      expect(address).not.toContain("namespace=stripe");
     });
   });
 });

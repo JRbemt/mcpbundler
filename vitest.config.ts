@@ -26,7 +26,8 @@ export default defineConfig({
         '**/*.d.ts',
         '**/*.config.*',
         '**/coverage/**',
-        'src/utils/logger.ts'
+        'src/utils/logger.ts',
+        'src/**/logger.ts'
       ]
     }
   },

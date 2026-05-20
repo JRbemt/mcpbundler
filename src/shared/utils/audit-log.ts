@@ -36,12 +36,6 @@ export enum AuditApiAction {
   MCP_DELETE = "mcp.delete",
   MCP_VIEW = "mcp.view",
 
-  // Credential operations
-  CREDENTIAL_BIND = "credential.bind",
-  CREDENTIAL_UPDATE = "credential.update",
-  CREDENTIAL_DELETE = "credential.delete",
-  CREDENTIAL_DECRYPT = "credential.decrypt",
-
   // Auth operations
   AUTH_SUCCESS = "auth.success",
   AUTH_FAILURE = "auth.failure",
@@ -55,6 +49,17 @@ export enum AuditApiAction {
   USER_VIEW = "user.view",
   PERMISSION_ADD = "permission.add",
   PERMISSION_REMOVE = "permission.remove",
+
+  // Subscription operations
+  SUBSCRIPTION_CREATE = "subscription.create",
+  SUBSCRIPTION_DELETE = "subscription.delete",
+  SUBSCRIPTION_VIEW = "subscription.view",
+  SUBSCRIPTION_TOKEN = "subscription.token",
+
+  // LLM credential operations
+  LLM_CREDENTIAL_BIND = "llm_credential.bind",
+  LLM_CREDENTIAL_REMOVE = "llm_credential.remove",
+  LLM_PROVIDER_VIEW = "llm_provider.view",
 
   // System operations
   WILDCARD_TOKEN_USED = "wildcard_token.used",

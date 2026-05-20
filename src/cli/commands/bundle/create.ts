@@ -1,5 +1,5 @@
 import { BundlerAPIClient } from "../../utils/api-client.js";
-import { banner, BG_COLORS } from "../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface CreateBundleOptions {
     host: string;
@@ -17,18 +17,14 @@ export async function createBundleCommand(name: string, description: string, opt
 
         banner(" Bundle Created Successfully ", { bg: BG_COLORS.GREEN });
 
-        console.group();
-        const tableData = [{
+        autoTable([{
             ID: bundle.id,
             Name: bundle.name,
             Description: bundle.description,
             Creator: bundle.createdBy?.name || "N/A",
             Created: new Date(bundle.createdAt).toLocaleString(),
-        }];
-
-        console.table(tableData);
+        }]);
         console.log();
-        console.groupEnd();
         process.exit(0);
     } catch (error: any) {
         const errorMsg = error.response?.data?.error || error.message;

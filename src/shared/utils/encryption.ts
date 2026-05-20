@@ -17,8 +17,6 @@ const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 const MIN_KEY_LENGTH = 32;
 
-let cachedEncryptionKey: Buffer | null = null;
-
 export const API_KEY_PREFIX = 'mcpb_';
 const API_KEY_LENGTH = 48;
 
@@ -27,10 +25,6 @@ const API_KEY_LENGTH = 48;
  * Caches the key for performance
  */
 export function getEncryptionKey(): Buffer {
-  if (cachedEncryptionKey) {
-    return cachedEncryptionKey;
-  }
-
   const key = process.env.ENCRYPTION_KEY;
 
   if (!key) {
@@ -63,7 +57,7 @@ export function encrypt(plaintext: string): string {
 
     return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
   } catch (error) {
-    throw new Error('Failed to encrypt data');
+    throw new Error(`Failed to encrypt data: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -91,7 +85,7 @@ export function decrypt(encryptedData: string): string {
 
     return decrypted;
   } catch (error) {
-    throw new Error('Failed to decrypt data');
+    throw new Error(`Failed to decrypt data: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -104,19 +98,15 @@ export function isEncrypted(data: string): boolean {
   const parts = data.split(':');
   if (parts.length !== 3) return false;
 
-  try {
-    const [ivHex, authTagHex, encrypted] = parts;
-    return (
-      ivHex.length === IV_LENGTH * 2 &&
-      authTagHex.length === AUTH_TAG_LENGTH * 2 &&
-      encrypted.length > 0 &&
-      /^[0-9a-f]+$/i.test(ivHex) &&
-      /^[0-9a-f]+$/i.test(authTagHex) &&
-      /^[0-9a-f]+$/i.test(encrypted)
-    );
-  } catch {
-    return false;
-  }
+  const [ivHex, authTagHex, encrypted] = parts;
+  return (
+    ivHex.length === IV_LENGTH * 2 &&
+    authTagHex.length === AUTH_TAG_LENGTH * 2 &&
+    encrypted.length > 0 &&
+    /^[0-9a-f]+$/i.test(ivHex) &&
+    /^[0-9a-f]+$/i.test(authTagHex) &&
+    /^[0-9a-f]+$/i.test(encrypted)
+  );
 }
 
 /**
@@ -169,17 +159,6 @@ export function isValidApiKeyFormat(apiKey: string): boolean {
  */
 export function validateEncryptionKey(): boolean {
   try {
-    const key = getEncryptionKey();
-
-    if (!key) {
-      logger.error('ENCRYPTION_KEY not set in environment variables');
-      return false;
-    }
-
-    if (key.length < MIN_KEY_LENGTH) {
-      logger.warn(`ENCRYPTION_KEY is shorter than recommended ${MIN_KEY_LENGTH} characters`);
-    }
-
     getEncryptionKey();
     logger.info('Encryption key validated successfully');
     return true;

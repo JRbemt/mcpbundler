@@ -1,5 +1,5 @@
 import { BundlerAPIClient } from "../../../utils/api-client.js";
-import { banner, BG_COLORS } from "../../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS } from "../../../utils/print-utils.js";
 
 interface TokenOptions {
     host: string;
@@ -32,7 +32,7 @@ export async function listBundleTokensCommand(id: string, options: TokenOptions)
             "Created At": new Date(token.createdAt).toLocaleString(),
         }));
 
-        console.table(tableData);
+        autoTable(tableData);
         console.groupEnd();
         console.log();
 

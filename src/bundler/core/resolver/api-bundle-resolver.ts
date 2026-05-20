@@ -11,7 +11,7 @@
  * expected by the rest of the bundler.
  */
 
-import { Bundle, MCPConfigSchema } from "../schemas.js";
+import { Bundle, BundleRouterConfigSchema, MCPConfigSchema } from "../schemas.js";
 import { ResolverService } from "./service.js";
 import logger from "../../../shared/utils/logger.js";
 
@@ -61,8 +61,18 @@ export class APIBundleResolver implements ResolverService {
       })
     );
 
+    let router: Bundle["router"] = undefined;
+    if (data.router) {
+      const parsed = BundleRouterConfigSchema.safeParse(data.router);
+      if (parsed.success) {
+        router = parsed.data;
+      } else {
+        logger.warn({ issues: parsed.error.issues }, "Invalid router config in backend response — ignored");
+      }
+    }
+
     logger.info(
-      { bundleId: data.bundleId, name: data.name, mcpCount: upstreams.length },
+      { bundleId: data.bundleId, name: data.name, mcpCount: upstreams.length, routerModel: router?.model },
       "Bundle resolved via backend API"
     );
 
@@ -70,6 +80,7 @@ export class APIBundleResolver implements ResolverService {
       bundleId: data.bundleId,
       name: data.name,
       upstreams,
+      router,
     };
   }
 }

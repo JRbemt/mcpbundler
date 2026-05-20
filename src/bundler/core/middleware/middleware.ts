@@ -1,6 +1,8 @@
 import {
     CallToolRequest,
     CallToolResult,
+    Prompt,
+    Resource,
     Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { MCPConfig } from "../schemas.js";
@@ -40,8 +42,10 @@ export interface MiddlewareContext {
  *
  * Lifecycle:
  *   Session created → middleware added
- *   Per tools/list  → transformToolList (inject own tools here)
- *   Per tools/call  → handleOwnToolCall → onBeforeToolCall → upstream → onAfterToolCall
+ *   Per tools/list     → transformToolList (inject own tools here)
+ *   Per resources/list → transformResourceList
+ *   Per prompts/list   → transformPromptList
+ *   Per tools/call     → handleOwnToolCall → onBeforeToolCall → upstream → onAfterToolCall
  *   Per upstream attach → onUpstreamAttached
  *   Session closed  → teardown
  */
@@ -50,10 +54,19 @@ export interface BundlerMiddleware {
 
     /**
      * Filter, reorder, or inject tools into the aggregated list before it is
-     * returned to the downstream agent. Middleware-owned tools (e.g. system
-     * meta-tools) are injected here by appending to the array.
+     * returned to the downstream agent.
      */
     transformToolList(tools: Tool[], context: MiddlewareContext): Promise<Tool[]>;
+
+    /**
+     * Filter or reorder resources before the list is returned to the agent.
+     */
+    transformResourceList(resources: Resource[], context: MiddlewareContext): Promise<Resource[]>;
+
+    /**
+     * Filter or reorder prompts before the list is returned to the agent.
+     */
+    transformPromptList(prompts: Prompt[], context: MiddlewareContext): Promise<Prompt[]>;
 
     /**
      * Attempt to handle a tool call directly.
@@ -104,6 +117,14 @@ export abstract class AbstractBundlerMiddleware implements BundlerMiddleware {
 
     async transformToolList(tools: Tool[], _ctx: MiddlewareContext): Promise<Tool[]> {
         return tools;
+    }
+
+    async transformResourceList(resources: Resource[], _ctx: MiddlewareContext): Promise<Resource[]> {
+        return resources;
+    }
+
+    async transformPromptList(prompts: Prompt[], _ctx: MiddlewareContext): Promise<Prompt[]> {
+        return prompts;
     }
 
     async handleOwnToolCall(

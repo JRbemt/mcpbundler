@@ -1,106 +1,44 @@
 /**
- * YAML Bundle Resolver - resolves bundle tokens from a static YAML config
+ * YAML Bundle Resolver
  *
- * Implements ResolverService against an in-memory token map built at startup
- * from a validated YamlConfig. No database or encryption key is required;
- * credentials live in environment variables referenced from the YAML file.
+ * Startup hook for YAML-mode deployments. Registers LLM providers declared
+ * in definitions.llms into the global LLM registry so they are available
+ * to the tool router middleware.
  *
- * Each bundle token is SHA-256 hashed at startup for constant-time lookup,
- * matching the same hashing convention used by DBBundleResolver.
+ * Token resolution is not supported in this resolver — bundles and subscriptions
+ * are registry-managed. Use `mcpbundler sync` to push definitions and
+ * `mcpbundler token <name>` to generate access tokens. For token resolution
+ * use DB mode (DATABASE_URL) or API mode (BACKEND_URL).
  */
 
-import { Bundle, MCPConfig } from "../schemas.js";
+import { Bundle } from "../schemas.js";
 import { ResolverService } from "./service.js";
-import { YamlConfig, YamlBundleMcpRef, YamlBundleMcpInline } from "./yaml-config-loader.js";
-import { hashApiKey } from "../../../shared/utils/encryption.js";
+import { YamlConfig } from "./yaml-config-loader.js";
 import logger from "../../../shared/utils/logger.js";
 
-function isRef(entry: YamlBundleMcpRef | YamlBundleMcpInline): entry is YamlBundleMcpRef {
-  return "ref" in entry;
-}
-
-const DEFAULT_PERMISSIONS = {
-  allowedTools: ["*"],
-  allowedResources: ["*"],
-  allowedPrompts: ["*"],
-};
-
-function resolveUpstreams(
-  bundleName: string,
-  entries: YamlConfig["bundles"][number]["mcps"],
-  mcpDefs: YamlConfig["mcps"]
-): MCPConfig[] {
-  const upstreams: MCPConfig[] = [];
-
-  for (const entry of entries) {
-    if (isRef(entry)) {
-      const def = mcpDefs[entry.ref];
-      if (!def) {
-        const available = Object.keys(mcpDefs).join(", ") || "(none)";
-        throw new Error(`Bundle "${bundleName}" references unknown MCP "${entry.ref}". Available: ${available}`);
-      }
-      upstreams.push({
-        namespace: entry.namespace ?? entry.ref,
-        url: def.url,
-        stateless: def.stateless,
-        authStrategy: def.auth ? "MASTER" : "NONE",
-        auth: def.auth,
-        permissions: entry.permissions ?? DEFAULT_PERMISSIONS,
-      });
-    } else {
-      upstreams.push({
-        namespace: entry.namespace,
-        url: entry.url,
-        stateless: entry.stateless,
-        authStrategy: entry.auth ? "MASTER" : "NONE",
-        auth: entry.auth,
-        permissions: entry.permissions ?? DEFAULT_PERMISSIONS,
-      });
-    }
-  }
-
-  return upstreams;
-}
-
 export class YamlBundleResolver implements ResolverService {
-  private readonly tokenMap: Map<string, Bundle> = new Map();
-
   constructor(config: YamlConfig) {
-    for (const bundleDef of config.bundles) {
-      const upstreams = resolveUpstreams(bundleDef.name, bundleDef.mcps, config.mcps);
-      const tokenHash = hashApiKey(bundleDef.token);
-
-      if (this.tokenMap.has(tokenHash)) {
-        throw new Error(`Duplicate token detected for bundle "${bundleDef.name}"`);
-      }
-
-      this.tokenMap.set(tokenHash, {
-        bundleId: tokenHash.slice(0, 16),
-        name: bundleDef.name,
-        upstreams,
-      });
-
-      logger.debug({ bundleName: bundleDef.name, mcpCount: upstreams.length }, "Registered YAML bundle");
+    if (config.bundles.length > 0) {
+      logger.warn(
+        { bundleCount: config.bundles.length },
+        "YAML config contains bundle definitions - run \"mcpbundler sync\" to push them to a registry"
+      );
     }
 
-    logger.info({ bundleCount: this.tokenMap.size }, "YamlBundleResolver initialized");
+    if (config.subscriptions.length > 0) {
+      logger.warn(
+        { subscriptionCount: config.subscriptions.length },
+        "YAML config contains subscriptions - run \"mcpbundler token <name>\" to generate access tokens"
+      );
+    }
+
+    logger.info("YamlBundleResolver initialized (token resolution requires DB or API mode)");
   }
 
-  async resolveBundle(token: string): Promise<Bundle> {
-    const tokenHash = hashApiKey(token);
-    const bundle = this.tokenMap.get(tokenHash);
-
-    if (!bundle) {
-      const err: any = new Error("Invalid or unknown token");
-      err.status = 401;
-      throw err;
-    }
-
-    logger.info(
-      { bundleName: bundle.name, mcpCount: bundle.upstreams.length },
-      "Bundle resolved from YAML config"
+  async resolveBundle(_token: string): Promise<Bundle> {
+    throw Object.assign(
+      new Error("Token resolution is not supported in YAML mode. Use DB mode (DATABASE_URL) or API mode (BACKEND_URL)."),
+      { status: 501 }
     );
-
-    return bundle;
   }
 }

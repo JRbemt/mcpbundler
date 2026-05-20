@@ -1,5 +1,5 @@
 import { BundlerAPIClient } from "../../utils/api-client.js";
-import { banner, BG_COLORS } from "../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface ShowBundleOptions {
     host: string;
@@ -45,7 +45,7 @@ export async function showBundleCommand(id: string, options: ShowBundleOptions):
             Prompts: formatPermissions(mcp.permissions?.allowedPrompts || ["*"]),
         }));
 
-        console.table(tableData);
+        autoTable(tableData, { maxColWidth: 60 });
         console.groupEnd();
         console.log();
 

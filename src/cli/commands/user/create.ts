@@ -1,5 +1,5 @@
 import { BundlerAPIClient } from "../../utils/api-client.js";
-import { banner, BG_COLORS } from "../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface CreateOptions {
   name: string;
@@ -25,22 +25,17 @@ export async function createCommand(options: CreateOptions): Promise<void> {
       });
 
       banner(" User Created Successfully ", { bg: BG_COLORS.GREEN });
-
-      console.group()
-      const tableData = [{
+      autoTable([{
         Name: result.name,
         Contact: result.contact,
         Department: result.department || "N/A",
-        Admin: result.isAdmin,
+        Admin: String(result.isAdmin),
         Permissions: result.permissions?.join(", ") || "None",
         Created: new Date(result.createdAt).toLocaleString(),
-      }];
-
-      console.table(tableData);
+      }]);
       console.log();
       console.log(`API Key: ${result.apiKey}`);
       console.log("IMPORTANT: Save this API key securely - it will not be shown again!");
-      console.groupEnd();
       console.log();
     } else {
       const result = await client.createUserSelfService({
@@ -49,20 +44,17 @@ export async function createCommand(options: CreateOptions): Promise<void> {
         department: options.department,
       });
 
-      banner("User Created via Self-Service", { bg: BG_COLORS.GREEN });
-
-      const tableData = [{
+      banner(" User Created via Self-Service ", { bg: BG_COLORS.GREEN });
+      autoTable([{
         Name: result.name,
         Contact: result.contact,
         Department: result.department || "N/A",
         Permissions: result.permissions?.join(", ") || "None",
         Created: new Date(result.createdAt).toLocaleString(),
-      }];
-
-      console.table(tableData);
-
+      }]);
+      console.log();
       console.log(`API Key: ${result.apiKey}`);
-      console.log("  IMPORTANT: Save this API key securely - it will not be shown again!");
+      console.log("IMPORTANT: Save this API key securely - it will not be shown again!");
     }
   } catch (error: any) {
     console.error(`Error creating user: ${error.response?.data?.error || error.message}`);

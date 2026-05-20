@@ -40,7 +40,7 @@ export async function generateToken(id: string, options: GenerateTokenOptions): 
         }
         console.log();
         console.log("Store this token securely! It will not be shown again.");
-        console.log("Use this token in the auhtorization header to connect to this bundle with mcpbundler.");
+        console.log("Use this token in the authorization header to connect to this bundle with mcpbundler.");
         console.groupEnd();
     } catch (error: any) {
         const msg = error.response?.data?.error || error.response?.data?.message || error.message;

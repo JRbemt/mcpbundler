@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from "axios";
 import type {
   CreateBundleRequest,
+  UpdateBundleRequest,
   CreateBundleResponse,
   GenerateTokenRequest,
   GenerateTokenResponse,
@@ -9,11 +10,8 @@ import type {
   BundleResponse,
 } from "../../api/routes/bundles.js";
 import type {
-  CredentialResponse,
-  CredentialListItem,
-} from "../../api/routes/credentials.js";
-import type {
   CreateMcpRequest,
+  UpdateMcpRequest,
   McpResponse,
 } from "../../api/routes/mcps.js";
 import type {
@@ -28,7 +26,11 @@ import type {
   UserPermissionsResponse,
   ChangePermissionResponse,
 } from "../../api/routes/permissions.js";
-import { MCPAuthConfig } from "../../shared/domain/entities.js";
+import type {
+  SubscriptionResponse,
+  GenerateSubscriptionTokenResponse,
+  UpsertSubscriptionRequest,
+} from "../../api/routes/subscriptions.js";
 
 // Re-exported types from API routes
 export type Mcp = McpResponse;
@@ -44,9 +46,8 @@ export type AddMcpRequest = AddMcpsByNamespaceRequest;
 export type AddMcpResponse = AddMcpByNamespaceResponse;
 export { AddMcpsByNamespaceRequest };
 
-// Re-export credential API types for CLI use
-export type Credential = CredentialListItem;
-export { CredentialResponse };
+// Re-export subscription API types for CLI use
+export type { SubscriptionResponse, GenerateSubscriptionTokenResponse };
 
 export class BundlerAPIClient {
   private client: AxiosInstance;
@@ -121,6 +122,14 @@ export class BundlerAPIClient {
    */
   async createBundle(name: string, description: string): Promise<BundleResponse> {
     const response = await this.client.post("/api/bundles", { name, description });
+    return response.data;
+  }
+
+  /**
+   * Update bundle metadata
+   */
+  async updateBundle(bundleId: string, data: UpdateBundleRequest): Promise<CreateBundleResponse> {
+    const response = await this.client.patch(`/api/bundles/${bundleId}`, data);
     return response.data;
   }
 
@@ -205,7 +214,7 @@ export class BundlerAPIClient {
   /**
    * Update MCP by namespace
    */
-  async updateMcp(namespace: string, config: Partial<McpResponse>): Promise<Mcp> {
+  async updateMcp(namespace: string, config: UpdateMcpRequest): Promise<Mcp> {
     const response = await this.client.put(`/api/mcps/${namespace}`, config);
     return response.data;
   }
@@ -369,45 +378,71 @@ export class BundlerAPIClient {
   }
 
   /**
-   * Bind credentials for a bundle token + MCP namespace
+   * Upsert subscription by name (create or update credentials/router)
    */
-  async bindCredential(bundleToken: string, namespace: string, authConfig: MCPAuthConfig): Promise<CredentialResponse> {
+  async upsertSubscription(data: UpsertSubscriptionRequest): Promise<SubscriptionResponse> {
+    const response = await this.client.post("/api/subscriptions", data);
+    return response.data;
+  }
+
+  /**
+   * List subscriptions for the authenticated user
+   */
+  async listSubscriptions(): Promise<SubscriptionResponse[]> {
+    const response = await this.client.get("/api/subscriptions");
+    return response.data;
+  }
+
+  /**
+   * Get a single subscription by name
+   */
+  async getSubscription(name: string): Promise<SubscriptionResponse> {
+    const response = await this.client.get(`/api/subscriptions/${encodeURIComponent(name)}`);
+    return response.data;
+  }
+
+  /**
+   * Delete a subscription by name
+   */
+  async deleteSubscription(name: string): Promise<void> {
+    await this.client.delete(`/api/subscriptions/${encodeURIComponent(name)}`);
+  }
+
+  /**
+   * List all available LLM providers in the registry
+   */
+  async listLlmProviders(): Promise<Array<{ name: string; model: string; endpoint: string; description?: string }>> {
+    const response = await this.client.get("/api/llm-providers");
+    return response.data;
+  }
+
+  /**
+   * Bind or update the caller's API key for a named LLM provider
+   */
+  async upsertLlmBinding(provider: string, apiKey: string): Promise<void> {
+    await this.client.put(`/api/llm-bindings/${encodeURIComponent(provider)}`, { apiKey });
+  }
+
+  /**
+   * Remove the caller's API key binding for a named LLM provider
+   */
+  async deleteLlmBinding(provider: string): Promise<void> {
+    await this.client.delete(`/api/llm-bindings/${encodeURIComponent(provider)}`);
+  }
+
+  /**
+   * Generate an access token for a named subscription
+   */
+  async generateSubscriptionToken(
+    subscriptionName: string,
+    tokenName: string,
+    description?: string,
+    expiresAt?: string
+  ): Promise<GenerateSubscriptionTokenResponse> {
     const response = await this.client.post(
-      `/api/credentials/${namespace}`,
-      { authConfig },
-      { headers: { "X-Bundle-Token": bundleToken } }
+      `/api/subscriptions/${encodeURIComponent(subscriptionName)}/token`,
+      { name: tokenName, description, expiresAt }
     );
-    return response.data;
-  }
-
-  /**
-   * Update credentials for a bundle token + MCP namespace
-   */
-  async updateCredential(bundleToken: string, namespace: string, authConfig: MCPAuthConfig): Promise<CredentialResponse> {
-    const response = await this.client.put(
-      `/api/credentials/${namespace}`,
-      { authConfig },
-      { headers: { "X-Bundle-Token": bundleToken } }
-    );
-    return response.data;
-  }
-
-  /**
-   * Remove credentials for a bundle token + MCP namespace
-   */
-  async removeCredential(bundleToken: string, namespace: string): Promise<void> {
-    await this.client.delete(`/api/credentials/${namespace}`, {
-      headers: { "X-Bundle-Token": bundleToken },
-    });
-  }
-
-  /**
-   * List all credentials for a bundle token
-   */
-  async listCredentials(bundleToken: string): Promise<Credential[]> {
-    const response = await this.client.get("/api/credentials", {
-      headers: { "X-Bundle-Token": bundleToken },
-    });
     return response.data;
   }
 }

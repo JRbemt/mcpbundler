@@ -93,11 +93,10 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
    * (session.close() emits SHUTDOWN which would call cleanupSession again).
    */
   async function cleanupSession(sessionId: string): Promise<void> {
-    const sessions = bundler.getSessions();
-    const session = sessions[sessionId];
+    const session = bundler.getSession(sessionId);
 
-    // Remove from maps FIRST to prevent re-entry
-    delete sessions[sessionId];
+    // Remove from registry FIRST to prevent re-entry
+    bundler.removeSession(sessionId);
     transportMeta.delete(sessionId);
 
     if (session) {
@@ -119,7 +118,6 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
     const ip = req.ip || req.socket.remoteAddress;
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const config = bundler.getConfig();
-    const sessions = bundler.getSessions();
 
     // Validate Accept header
     if (!validateAcceptHeader(req)) {
@@ -140,11 +138,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
     if (sessionId && transportMeta.has(sessionId)) {
       // Existing session - use existing transport
       const meta = transportMeta.get(sessionId)!;
-      const session = sessions[sessionId];
-
-      if (session) {
-        session.touch();
-      }
+      bundler.getSession(sessionId)?.recordActivity();
 
       try {
         await meta.transport.handleRequest(req, res, req.body);
@@ -162,8 +156,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       // New session - authenticate and create transport
 
       // Reject connections during startup grace period
-      const serverStartTime = (bundler as any).serverStartTime;
-      if (serverStartTime && Date.now() - serverStartTime < startupGracePeriodMs) {
+      if (Date.now() - bundler.getServerStartTime() < startupGracePeriodMs) {
         logger.warn({ userAgent: ua, ip }, "Rejecting connection during startup grace period");
         res.status(503).json({
           jsonrpc: "2.0",
@@ -174,9 +167,8 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       }
 
       // Check session capacity
-      const currentSessionCount = Object.keys(sessions).length;
-      if (currentSessionCount >= config.concurrency.max_concurrent) {
-        logger.warn({ currentSessions: currentSessionCount, max: config.concurrency.max_concurrent },
+      if (bundler.getSessionCount() >= config.concurrency.max_concurrent) {
+        logger.warn({ currentSessions: bundler.getSessionCount(), max: config.concurrency.max_concurrent },
           "Max sessions reached, rejecting new connection");
         res.status(503).json({
           jsonrpc: "2.0",
@@ -257,10 +249,20 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
             );
           });
 
+          // Install LLM tool router if the bundle carries router config with at least one signal enabled.
+          // Must be called before addSession so the session is passed directly.
+          if (bundleConfig.router) {
+            bundler.installRouterMiddleware(session, bundleConfig.router);
+          }
+
+          // Store session before attaching upstreams so MCP handlers can reach it
+          bundler.addSession(sessionId, session);
+
           if (strategy === LoadingStrategy.EAGER) {
-            // Block until all upstreams are connected so the client receives a
-            // complete tool list on its very first tools/list request.
+            // Block until all upstreams are connected, then emit once so the client
+            // receives a complete tool list on its very first tools/list request.
             await bundler.attachUpstreamsAsync(session, bundleConfig.upstreams);
+            session.emitListChanged();
             logger.debug({ sessionId, strategy }, "All upstreams attached (eager)");
           } else {
             // PROGRESSIVE: respond immediately; client receives list_changed
@@ -278,9 +280,6 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
             logger.info({ sessionId }, "Session shutdown event, cleaning up");
             cleanupSession(sessionId);
           });
-
-          // Store session in bundler's sessions map (used by MCP handlers)
-          sessions[sessionId] = session;
 
           // Store transport metadata (mcpServer kept for runtime middleware access)
           transportMeta.set(sessionId, {
@@ -355,7 +354,6 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
   router.get("/mcp", mcpLimiter, async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string;
     const meta = transportMeta.get(sessionId);
-    const sessions = bundler.getSessions();
 
     if (!meta) {
       res.status(400).json({
@@ -366,10 +364,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       return;
     }
 
-    const session = sessions[sessionId];
-    if (session) {
-      session.touch();
-    }
+    bundler.getSession(sessionId)?.recordActivity();
 
     try {
       await meta.transport.handleRequest(req, res);
@@ -460,7 +455,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       return;
     }
 
-    const session = bundler.getSessions()[sessionId];
+    const session = bundler.getSession(sessionId);
     if (!session) {
       res.status(404).json({ error: "Session not found in bundler" });
       return;
@@ -471,8 +466,20 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       return;
     }
 
-    logger.info({ sessionId, middleware: name }, "Middleware added via API (future registries will resolve by name)");
-    res.status(202).json({ sessionId, middleware: name, status: "queued" });
+    const instance = bundler.instantiateMiddleware(name, sessionId);
+    if (!instance) {
+      res.status(400).json({
+        error: `Unknown middleware "${name}"`,
+        registered: bundler.getRegisteredMiddlewareNames(),
+      });
+      return;
+    }
+
+    bundler.addMiddlewareToSession(sessionId, instance);
+    session.emitListChanged();
+
+    logger.info({ sessionId, middleware: name }, "Middleware installed via API");
+    res.json({ sessionId, middleware: name, status: "installed" });
   });
 
   /**
@@ -485,7 +492,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       return;
     }
 
-    const { name } = req.params;
+    const name = req.params.name as string;
     const removed = bundler.removeMiddlewareFromSession(sessionId, name);
     if (!removed) {
       res.status(404).json({ error: `Middleware "${name}" not found on this session` });
@@ -500,14 +507,13 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
    * Get session stats for monitoring
    */
   router.get("/status", mcpLimiter, async (_req: Request, res: Response) => {
-    const sessions = bundler.getSessions();
     const config = bundler.getConfig();
 
     const metrics = {
       sessions: {
-        active: Object.keys(sessions).length,
+        active: bundler.getSessionCount(),
         max: config.concurrency.max_concurrent,
-        details: Object.values(sessions).map((session, index) => ({
+        details: bundler.getAllSessions().map((session, index) => ({
           id: index,
           idleTimeMs: session.getTimeSinceLastActivity(),
           upstreams: session.getAllUpstreams().length

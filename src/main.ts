@@ -23,11 +23,14 @@ import { APIBundleResolver } from "./bundler/core/resolver/api-bundle-resolver.j
 import { YamlBundleResolver } from "./bundler/core/resolver/yaml-bundle-resolver.js";
 import { loadYamlConfig } from "./bundler/core/resolver/yaml-config-loader.js";
 import { PrismaClient } from "./shared/domain/entities.js";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { createBundleRoutes } from "./api/routes/bundles.js";
-import { createCredentialRoutes } from "./api/routes/credentials.js";
 import { createMcpRoutes } from "./api/routes/mcps.js";
 import { createUserRoutes } from "./api/routes/users.js";
 import { createPermissionRoutes } from "./api/routes/permissions.js";
+import { createSubscriptionRoutes } from "./api/routes/subscriptions.js";
+import { createLlmProviderRoutes } from "./api/routes/llm-providers.js";
+import { LlmProviderRepository } from "./shared/infra/repository/index.js";
 import { createAuthMiddleware } from "./api/middleware/auth.js";
 import { initializeSystemData, parsePermissions, SystemInitConfig } from "./shared/utils/initialize-db.js";
 import logger from "./shared/utils/logger.js";
@@ -88,15 +91,17 @@ export async function main() {
     const backendUrl = process.env.BACKEND_URL?.trimEnd().replace(/\/$/, "");
     const yamlConfigPath = process.env.YAML_CONFIG?.trim();
 
+    // Load YAML config regardless of resolver mode — used for LLM provider registration.
+    const yamlConfig = yamlConfigPath ? loadYamlConfig(yamlConfigPath) : undefined;
+
     let resolver;
     let prisma: PrismaClient | undefined;
 
     if (backendUrl) {
       logger.info({ backendUrl }, "Using APIBundleResolver - delegating bundle resolution to backend");
       resolver = new APIBundleResolver(backendUrl);
-    } else if (yamlConfigPath) {
-      logger.info({ path: yamlConfigPath }, "Using YamlBundleResolver - loading config from YAML");
-      const yamlConfig = loadYamlConfig(yamlConfigPath);
+    } else if (yamlConfigPath && yamlConfig) {
+      logger.info({ path: yamlConfigPath }, "Using YamlBundleResolver - YAML config mode (no token resolution)");
       resolver = new YamlBundleResolver(yamlConfig);
     } else {
       // DB mode = requires ENCRYPTION_KEY and DATABASE_URL
@@ -118,28 +123,35 @@ export async function main() {
         throw new Error("DATABASE_URL environment variable is required. Set it in .env file.");
       }
 
-      prisma = new PrismaClient({
-        log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-        datasources: { db: { url: databaseUrl } }
-      });
-
-      // Apply SQLite optimizations for better concurrency
-      if (databaseUrl.startsWith("file:")) {
-        await prisma.$queryRawUnsafe("PRAGMA journal_mode=WAL;");
-        await prisma.$queryRawUnsafe("PRAGMA busy_timeout=5000;");
-      }
+      const adapter = new PrismaPg({ connectionString: databaseUrl });
+      prisma = new PrismaClient({ adapter } as any);
 
       logger.info("Using DBBundleResolver - standalone mode");
       resolver = new DBBundleResolver(prisma, CONFIG.resolver.wildcard);
     }
 
     const bundlerServer = new BundlerServer(validatedConfig, resolver);
+
+    // Register LLM providers from YAML config (works in all resolver modes).
+    if (yamlConfig) {
+      for (const llm of yamlConfig.definitions.llms) {
+        bundlerServer.registerLLMProvider(llm);
+      }
+    }
+
     const app = bundlerServer.getApp();
 
     // Mount management API only in DB mode (YAML and API modes have no local data store)
     if (!backendUrl && !yamlConfigPath && prisma) {
       const systemConfig = buildSystemInitConfig();
       await initializeSystemData(prisma, systemConfig);
+
+      const llmRepo = new LlmProviderRepository(prisma);
+      await llmRepo.seed([
+        { name: "claude", model: "claude-3-5-haiku-20241022", endpoint: "https://api.anthropic.com/v1", description: "Anthropic Claude" },
+        { name: "chatgpt", model: "gpt-4o-mini", endpoint: "https://api.openai.com/v1", description: "OpenAI ChatGPT" },
+        { name: "gemini", model: "gemini-2.0-flash", endpoint: "https://generativelanguage.googleapis.com/v1beta/openai", description: "Google Gemini" },
+      ]);
 
       const authMiddleware = createAuthMiddleware(prisma);
       const apiRouter = express.Router();
@@ -150,10 +162,11 @@ export async function main() {
       });
 
       apiRouter.use("/bundles", authMiddleware, createBundleRoutes(prisma));
-      apiRouter.use("/credentials", createCredentialRoutes(prisma));
       apiRouter.use("/mcps", authMiddleware, createMcpRoutes(prisma));
       apiRouter.use("/users", createUserRoutes(authMiddleware, prisma));
       apiRouter.use("/permissions", createPermissionRoutes(authMiddleware, prisma));
+      apiRouter.use("/subscriptions", authMiddleware, createSubscriptionRoutes(prisma));
+      apiRouter.use(authMiddleware, createLlmProviderRoutes(prisma));
       app.use("/api", apiRouter);
       logger.info("Management API mounted at /api");
     } else if (backendUrl) {

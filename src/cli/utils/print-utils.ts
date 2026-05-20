@@ -1,4 +1,21 @@
+import * as readline from "readline";
+
 export const HELP_FOOTER = "\nFor more information and updates checkout: https://github.com/JRbemt/mcpbundler\n";
+
+export async function confirm(question: string): Promise<boolean> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => {
+    rl.question(`${question} (yes/no): `, answer => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === "yes");
+    });
+  });
+}
+
+export function errorExit(message: string, code = 1): never {
+  console.error(message);
+  process.exit(code);
+}
 
 export const BG_COLORS = {
   BLACK: "\x1b[40m",
@@ -151,4 +168,24 @@ export function banner(
   const fg = options?.fg ?? "";
 
   console.log(`${bg}${fg}${text}\x1b[0m`);
+}
+
+export function autoTable<T extends Record<string, unknown>>(
+  data: T[],
+  opts?: { maxColWidth?: number; indent?: string; color?: string }
+): void {
+  if (data.length === 0) return;
+  const maxColWidth = opts?.maxColWidth ?? 50;
+  const keys = Object.keys(data[0]);
+  const stringified = data.map(row => {
+    const r: Record<string, string> = {};
+    for (const k of keys) r[k] = String(row[k] ?? "-");
+    return r;
+  });
+  const columns: TableColumn[] = keys.map(key => {
+    const maxDataLen = Math.max(0, ...stringified.map(row => row[key].length));
+    const width = Math.min(maxColWidth, Math.max(key.length, maxDataLen));
+    return { header: key, width, key };
+  });
+  printTable(stringified, { columns, indent: opts?.indent, color: opts?.color });
 }

@@ -1,6 +1,6 @@
 import { MCPAuthConfig } from "../../../shared/domain/entities.js";
 import { BundlerAPIClient } from "../../utils/api-client.js";
-import { banner, BG_COLORS } from "../../utils/print-utils.js";
+import { autoTable, banner, BG_COLORS } from "../../utils/print-utils.js";
 
 interface UpdateOptions {
   url?: string;
@@ -136,17 +136,14 @@ export async function updateMcpCommand(namespace: string, options: UpdateOptions
       console.log();
     }
 
-    // Show final state
-    const tableData = [{
+    autoTable([{
       Namespace: updated.namespace,
       URL: updated.url,
       Creator: updated.createdBy?.name,
       Version: updated.version,
       Stateless: updated.stateless ? "Yes" : "No",
       "Auth Strategy": updated.authStrategy || "NONE",
-    }];
-
-    console.table(tableData);
+    }]);
     console.log(`Description: ${updated.description}`);
     console.groupEnd();
     console.log();

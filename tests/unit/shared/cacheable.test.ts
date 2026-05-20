@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { CacheManager } from "../../../src/shared/utils/cacheable.js";
+import { CacheManager, cached } from "../../../src/shared/utils/cacheable.js";
 
 describe("CacheManager", () => {
   let cache: CacheManager<{ value: string }>;
@@ -152,5 +152,99 @@ describe("CacheManager", () => {
       expect(fastCache.get("short")).toBeUndefined();
       expect(fastCache.get("long")).toEqual({ value: "stays" });
     });
+  });
+
+  describe("sizeCalculation fallback", () => {
+    it("falls back to 1024 for non-serialisable (circular) values", () => {
+      const c = new CacheManager<any>();
+      const circular: any = {};
+      circular.self = circular;
+      c.set("circular", circular);
+      expect(c.has("circular")).toBe(true);
+    });
+  });
+});
+
+describe("@cached decorator", () => {
+  it("returns cached value on second call without re-executing the method", async () => {
+    const compute = vi.fn(async (n: number) => n * 2);
+
+    class Svc {
+      cache = new CacheManager<number>();
+
+      @cached<Svc, number, [number]>((self) => self.cache, (n) => String(n))
+      async double(n: number): Promise<number> { return compute(n); }
+    }
+
+    const svc = new Svc();
+    expect(await svc.double(5)).toBe(10);
+    expect(await svc.double(5)).toBe(10);
+    expect(compute).toHaveBeenCalledOnce();
+  });
+
+  it("calls through again for a different argument", async () => {
+    const compute = vi.fn(async (n: number) => n * 3);
+
+    class Svc {
+      cache = new CacheManager<number>();
+
+      @cached<Svc, number, [number]>((self) => self.cache, (n) => String(n))
+      async triple(n: number): Promise<number> { return compute(n); }
+    }
+
+    const svc = new Svc();
+    await svc.triple(2);
+    await svc.triple(3);
+    expect(compute).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips cache when shouldCache returns false", async () => {
+    const compute = vi.fn(async (n: number) => n);
+
+    class Svc {
+      cache = new CacheManager<number>();
+
+      @cached<Svc, number, [number]>((self) => self.cache, (n) => String(n), () => false)
+      async pass(n: number): Promise<number> { return compute(n); }
+    }
+
+    const svc = new Svc();
+    await svc.pass(1);
+    await svc.pass(1);
+    expect(compute).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses JSON.stringify as the default key function when no keyFn is provided", async () => {
+    const compute = vi.fn(async (a: string, b: number) => `${a}-${b}`);
+
+    class Svc {
+      cache = new CacheManager<string>();
+
+      @cached<Svc, string, [string, number]>((self) => self.cache)
+      async combine(a: string, b: number): Promise<string> { return compute(a, b); }
+    }
+
+    const svc = new Svc();
+    expect(await svc.combine("x", 1)).toBe("x-1");
+    expect(await svc.combine("x", 1)).toBe("x-1");
+    expect(compute).toHaveBeenCalledOnce();
+
+    expect(await svc.combine("x", 2)).toBe("x-2");
+    expect(compute).toHaveBeenCalledTimes(2);
+  });
+
+  it("cache is per-instance not shared across instances", async () => {
+    const compute = vi.fn(async (n: number) => n);
+
+    class Svc {
+      cache = new CacheManager<number>();
+
+      @cached<Svc, number, [number]>((self) => self.cache, (n) => String(n))
+      async id(n: number): Promise<number> { return compute(n); }
+    }
+
+    await new Svc().id(7);
+    await new Svc().id(7);
+    expect(compute).toHaveBeenCalledTimes(2);
   });
 });

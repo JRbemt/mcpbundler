@@ -57,7 +57,6 @@ export function createSseRoutes(bundler: BundlerServer): Router {
   router.get("/sse", sseLimiter, async (req: Request, res: Response) => {
     const ua = req.headers["user-agent"];
     const ip = req.ip || req.socket.remoteAddress;
-    const sessions = bundler.getSessions();
     const config = bundler.getConfig();
     logger.info({
       headers: req.headers,
@@ -67,14 +66,13 @@ export function createSseRoutes(bundler: BundlerServer): Router {
     const token = authHeader?.substring(7) || "";
 
     // Reject connections during startup grace period (first 1 second)
-    const serverStartTime = (bundler as any).serverStartTime;
-    if (serverStartTime && Date.now() - serverStartTime < startupGracePeriodMs) {
+    if (Date.now() - bundler.getServerStartTime() < startupGracePeriodMs) {
       logger.warn({ userAgent: ua, ip }, "Rejecting connection during startup grace period");
       res.status(503).json({ error: "Server is starting up, please retry in a moment" });
       return;
     }
 
-    if (Object.keys(sessions).length >= config.concurrency.max_concurrent) {
+    if (bundler.getSessionCount() >= config.concurrency.max_concurrent) {
       logger.warn("Max sessions reached, rejecting new connection");
       res.status(503).json({ error: "Too many active sessions" });
       return;
@@ -82,7 +80,7 @@ export function createSseRoutes(bundler: BundlerServer): Router {
 
     // Handle existing session reconnection
     if (req.query.sessionId) {
-      if ((req.query.sessionId as string) in sessions) {
+      if (bundler.getSession(req.query.sessionId as string)) {
         logger.info({ sessionId: req.query.sessionId, userAgent: ua, ip }, "existing SSE connection reestablished");
         res.status(200);
       } else {
@@ -139,7 +137,7 @@ export function createSseRoutes(bundler: BundlerServer): Router {
     });
 
     // Store session and transport
-    sessions[sessionId] = session;
+    bundler.addSession(sessionId, session);
     transportMeta.set(sessionId, {
       transport,
       bundleId: bundleConfig.bundleId,
@@ -152,7 +150,7 @@ export function createSseRoutes(bundler: BundlerServer): Router {
     // Handle session shutdown (triggered by idle timeout or manual close)
     session.on(SESSION_EVENTS.SHUTDOWN, () => {
       logger.info({ sessionId }, "Session shutdown, removing from sessions map");
-      delete sessions[sessionId];
+      bundler.removeSession(sessionId);
       transportMeta.delete(sessionId);
     });
 
@@ -169,21 +167,17 @@ export function createSseRoutes(bundler: BundlerServer): Router {
 
   router.post("/messages", async (req: Request, res: Response) => {
     const sessionId: string = req.query.sessionId as string;
-    const sessions = bundler.getSessions();
-    const session = sessions[sessionId];
+    const session = bundler.getSession(sessionId);
     const meta = transportMeta.get(sessionId);
 
     if (!session || !meta) {
-      logger.warn({
-        requestedSessionId: sessionId,
-        availableSessions: Object.keys(sessions)
-      }, "No session found for /messages");
+      logger.warn({ requestedSessionId: sessionId }, "No session found for /messages");
       res.status(400).send("No transport found for sessionId");
       return;
     }
 
     // Touch session to update activity
-    session.touch();
+    session.recordActivity();
 
     const chunks: any[] = [];
     req.on("data", (chunk) => chunks.push(chunk));
