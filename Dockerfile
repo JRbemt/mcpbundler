@@ -1,5 +1,5 @@
 # ---- Stage 1: Builder - Compile TypeScript ----
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Install build-time system dependencies
@@ -9,9 +9,10 @@ RUN apk add --no-cache openssl
 COPY package*.json ./
 RUN npm ci && npm cache clean --force
 
-# Copy Prisma schema and generate client
+# Copy Prisma schema and config, then generate client
 COPY prisma ./prisma/
-RUN npx prisma generate --schema=./prisma/postgres/schema.prisma
+COPY prisma.config.ts ./
+RUN npx prisma generate
 
 # Copy source files and build
 COPY tsconfig.json ./
@@ -21,7 +22,7 @@ COPY src ./src
 RUN npm run build
 
 # ---- Stage 2: Production Runtime ----
-FROM node:20-alpine AS production
+FROM node:22-alpine AS production
 WORKDIR /app
 
 # Install runtime system dependencies
@@ -36,6 +37,7 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=nodejs:nodejs /app/prisma.config.ts ./
 
 COPY --chown=nodejs:nodejs ./scripts ./scripts
 RUN chmod +x ./scripts/docker-entrypoint.sh

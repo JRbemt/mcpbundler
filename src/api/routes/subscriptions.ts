@@ -29,21 +29,21 @@ import { AuditApiAction } from "../../shared/utils/audit-log.js";
 import logger from "../../shared/utils/logger.js";
 
 // Request schemas
-const UpsertSubscriptionRequestSchema = z.object({
+export const UpsertSubscriptionRequestSchema = z.object({
   name: z.string().min(1, "Subscription name is required"),
   bundleId: z.string().uuid("bundleId must be a UUID"),
   credentials: z.record(z.string(), MCPAuthConfigSchema).optional(),
   router: BundleRouterConfigSchema.optional(),
 });
 
-const GenerateSubscriptionTokenRequestSchema = z.object({
+export const GenerateSubscriptionTokenRequestSchema = z.object({
   name: z.string().min(1, "Token name is required"),
   description: z.string().optional(),
   expiresAt: z.string().datetime({ offset: true }).optional(),
 });
 
 // Response schemas
-const SubscriptionResponseSchema = z.object({
+export const SubscriptionResponseSchema = z.object({
   id: z.string(),
   name: z.string(),
   bundleId: z.string(),
@@ -54,7 +54,7 @@ const SubscriptionResponseSchema = z.object({
   updatedAt: z.string(),
 });
 
-const GenerateSubscriptionTokenResponseSchema = z.object({
+export const GenerateSubscriptionTokenResponseSchema = z.object({
   token: z.string(),
   tokenId: z.string(),
   tokenName: z.string(),

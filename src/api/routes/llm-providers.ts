@@ -19,19 +19,19 @@ import {
 import { AuditApiAction } from "../../shared/utils/audit-log.js";
 import logger from "../../shared/utils/logger.js";
 
-const LlmProviderResponseSchema = z.object({
+export const LlmProviderResponseSchema = z.object({
   name: z.string(),
   model: z.string(),
   endpoint: z.string(),
   description: z.string().nullable(),
 });
 
-const LlmBindingResponseSchema = z.object({
+export const LlmBindingResponseSchema = z.object({
   provider: z.string(),
   bound: z.boolean(),
 });
 
-const UpsertLlmBindingSchema = z.object({
+export const UpsertLlmBindingSchema = z.object({
   apiKey: z.string().min(1, "apiKey is required"),
 });
 

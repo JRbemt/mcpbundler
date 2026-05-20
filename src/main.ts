@@ -32,6 +32,8 @@ import { createSubscriptionRoutes } from "./api/routes/subscriptions.js";
 import { createLlmProviderRoutes } from "./api/routes/llm-providers.js";
 import { LlmProviderRepository } from "./shared/infra/repository/index.js";
 import { createAuthMiddleware } from "./api/middleware/auth.js";
+import { generateOpenApiSpec } from "./api/openapi.js";
+import swaggerUi from "swagger-ui-express";
 import { initializeSystemData, parsePermissions, SystemInitConfig } from "./shared/utils/initialize-db.js";
 import logger from "./shared/utils/logger.js";
 import { validateEncryptionKey } from "./shared/utils/encryption.js";
@@ -167,8 +169,14 @@ export async function main() {
       apiRouter.use("/permissions", createPermissionRoutes(authMiddleware, prisma));
       apiRouter.use("/subscriptions", authMiddleware, createSubscriptionRoutes(prisma));
       apiRouter.use(authMiddleware, createLlmProviderRoutes(prisma));
+
+      const spec = generateOpenApiSpec();
+      app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(spec));
+      app.get("/api/openapi.json", (_req, res) => res.json(spec));
+
       app.use("/api", apiRouter);
       logger.info("Management API mounted at /api");
+      logger.info("API docs available at /api/docs");
     } else if (backendUrl) {
       logger.info("Management API disabled - backend integration active");
     } else {

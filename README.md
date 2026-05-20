@@ -60,7 +60,7 @@ Add the MCP to the bundle. All 5 agents already pointing at that bundle endpoint
 **Roadmap:**
 
 - [ ] Full OAuth2 support
-- [ ] OpenAPI Docs
+- [x] OpenAPI Docs
 - [ ] Web UI
 - [ ] Fine-grained permissions
 - [ ] Metrics dashboard for logs and metering
@@ -205,6 +205,8 @@ To use the bundler, no user account is needed. Just a bundle access (or a wildca
 # 4. API
 
 All management endpoints are under `/api`. Most require an API user token passed via the `Authorization: Bearer <token>` header. The root admin token is printed to the console on first startup.
+
+OpenAPI documentation is available at `/api/docs`. The raw OpenAPI 3.0 spec is served at `/api/openapi.json`. Use the "Authorize" button in the UI to set your `mbk_...` token and execute requests directly against the running server.
 
 <details>
 <summary>4.1 Users</summary>
