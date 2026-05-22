@@ -44,7 +44,7 @@ import {
 import logger from "../../../shared/utils/logger.js";
 import { UpstreamConnectionPool } from "../upstream/upstream-connector-pool.js";
 import { IConnectorFactory } from "../upstream/upstream-connector-factory.js";
-import { LoadingStrategy } from "../loading/loading-strategy.js";
+import { LoadingStrategy } from "./loading/loading-strategy.js";
 import { BundlerMiddleware, MiddlewareContext } from "../middleware/middleware.js";
 import { MiddlewareChain } from "../middleware/middleware-chain.js";
 

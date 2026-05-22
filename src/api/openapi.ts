@@ -1,8 +1,10 @@
 import { extendZodWithOpenApi, OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import { readFileSync } from "fs";
-import { join } from "path";
-const { version } = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8")) as { version: string };
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const { version } = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8")) as { version: string };
 import { CreateMcpRequestSchema, UpdateMcpRequestSchema, MCPResponseSchema, BulkDeleteResponseSchema } from "./routes/utils/mcp-schemas.js";
 import {
   CreateBundleRequestSchema,

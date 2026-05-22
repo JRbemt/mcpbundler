@@ -26,7 +26,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { randomUUID } from "crypto";
 import { BundlerServer } from "../core/bundler.js";
 import { SESSION_EVENTS } from "../core/session/session.js";
-import { LoadingStrategy } from "../core/loading/loading-strategy.js";
+import { LoadingStrategy } from "../core/session/loading/loading-strategy.js";
 import logger from "../../shared/utils/logger.js";
 import { getPrometheusMetrics } from "../utils/metrics.js";
 import { register } from "prom-client";

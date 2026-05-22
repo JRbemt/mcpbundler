@@ -41,7 +41,7 @@ import { AuditBundlerAction, withAudit } from "../../shared/utils/audit-log.js";
 import logger from "../../shared/utils/logger.js";
 import { UpstreamConnectorFactory } from "./upstream/upstream-connector-factory.js";
 import { UpstreamConnectionPool } from "./upstream/upstream-connector-pool.js";
-import { LoadingStrategy } from "./loading/loading-strategy.js";
+import { LoadingStrategy } from "./session/loading/loading-strategy.js";
 import { BundlerMiddleware } from "./middleware/middleware.js";
 import { BundlerSystemToolsMiddleware } from "./middleware/builtin-tools.js";
 import { LLMRouterTool, getLLM, registerLLM, getRegisteredLLMNames } from "./middleware/llm-router/router-tool.js";

@@ -101,6 +101,13 @@ export function buildAuthOptions(config?: MCPAuthConfig): StreamableHTTPClientTr
         }
       };
 
+    case "headers":
+      return {
+        requestInit: {
+          headers: config.headers
+        }
+      };
+
     default:
       return {};
   }

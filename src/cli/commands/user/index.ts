@@ -10,7 +10,7 @@ import { HELP_FOOTER } from "../../utils/print-utils.js";
 
 export function createUserCommand(): Command {
   const user = new Command("user")
-    .description("manage API users (requires --token)")
+    .description("manage API users")
     .showHelpAfterError()
     .showSuggestionAfterError();
 

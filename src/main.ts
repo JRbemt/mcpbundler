@@ -20,8 +20,6 @@ import { BundlerConfigSchema } from "./bundler/core/schemas.js";
 import { BundlerServer } from "./bundler/core/bundler.js";
 import { DBBundleResolver } from "./bundler/core/resolver/db-resolver.js";
 import { APIBundleResolver } from "./bundler/core/resolver/api-bundle-resolver.js";
-import { YamlBundleResolver } from "./bundler/core/resolver/yaml-bundle-resolver.js";
-import { loadYamlConfig } from "./bundler/core/resolver/yaml-config-loader.js";
 import { PrismaClient } from "./shared/domain/entities.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createBundleRoutes } from "./api/routes/bundles.js";
@@ -91,10 +89,6 @@ export async function main() {
     const validatedConfig = BundlerConfigSchema.parse(CONFIG.bundler);
 
     const backendUrl = process.env.BACKEND_URL?.trimEnd().replace(/\/$/, "");
-    const yamlConfigPath = process.env.YAML_CONFIG?.trim();
-
-    // Load YAML config regardless of resolver mode — used for LLM provider registration.
-    const yamlConfig = yamlConfigPath ? loadYamlConfig(yamlConfigPath) : undefined;
 
     let resolver;
     let prisma: PrismaClient | undefined;
@@ -102,9 +96,6 @@ export async function main() {
     if (backendUrl) {
       logger.info({ backendUrl }, "Using APIBundleResolver - delegating bundle resolution to backend");
       resolver = new APIBundleResolver(backendUrl);
-    } else if (yamlConfigPath && yamlConfig) {
-      logger.info({ path: yamlConfigPath }, "Using YamlBundleResolver - YAML config mode (no token resolution)");
-      resolver = new YamlBundleResolver(yamlConfig);
     } else {
       // DB mode = requires ENCRYPTION_KEY and DATABASE_URL
       logger.info("Validating encryption key configuration");
@@ -133,18 +124,10 @@ export async function main() {
     }
 
     const bundlerServer = new BundlerServer(validatedConfig, resolver);
-
-    // Register LLM providers from YAML config (works in all resolver modes).
-    if (yamlConfig) {
-      for (const llm of yamlConfig.definitions.llms) {
-        bundlerServer.registerLLMProvider(llm);
-      }
-    }
-
     const app = bundlerServer.getApp();
 
-    // Mount management API only in DB mode (YAML and API modes have no local data store)
-    if (!backendUrl && !yamlConfigPath && prisma) {
+    // Mount management API in DB mode only
+    if (!backendUrl && prisma) {
       const systemConfig = buildSystemInitConfig();
       await initializeSystemData(prisma, systemConfig);
 
@@ -179,8 +162,6 @@ export async function main() {
       logger.info("API docs available at /api/docs");
     } else if (backendUrl) {
       logger.info("Management API disabled - backend integration active");
-    } else {
-      logger.info("Management API disabled - YAML config mode active");
     }
 
     // Start the HTTP server after all routes are mounted

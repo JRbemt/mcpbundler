@@ -1,6 +1,6 @@
 {
   "name": "@jrbemt/mcpbundler",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP Bundler - Aggregate multiple MCP servers into one",
   "license": "MIT",
   "author": "Joaquín van den Bemt",
@@ -49,6 +49,7 @@
     "eventsource": "^4.1.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
+    "i": "^0.3.7",
     "lru-cache": "^11.3.6",
     "pg": "^8.16.0",
     "pino": "^10.3.1",

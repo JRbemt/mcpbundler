@@ -16,8 +16,8 @@ export type CreatedApiUser = Prisma.ApiUserGetPayload<{
 /**
  * Upstream authentication configuration schema
  *
- * Discriminated union supporting four auth methods: none, bearer, basic,
- * api_keys. Each method has its own required fields.
+ * Discriminated union supporting five auth methods: none, bearer, basic,
+ * api_key, headers. Each method has its own required fields.
  */
 export const MCPAuthConfigSchema = z.discriminatedUnion('method', [
     z.object({
@@ -36,7 +36,11 @@ export const MCPAuthConfigSchema = z.discriminatedUnion('method', [
         method: z.literal('api_key'),
         key: z.string(),
         header: z.string().default('X-API-Key'),
-    })
+    }),
+    z.object({
+        method: z.literal('headers'),
+        headers: z.record(z.string(), z.string()),
+    }),
 ]);
 export type MCPAuthConfig = z.infer<typeof MCPAuthConfigSchema>;
 
