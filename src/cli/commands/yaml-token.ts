@@ -1,5 +1,5 @@
 import { banner, BG_COLORS } from "../utils/print-utils.js";
-import { loadYamlConfig } from "../../bundler/core/resolver/yaml-config-loader.js";
+import { loadYamlConfig, buildEnvForConfig } from "../../bundler/core/resolver/yaml-config-loader.js";
 import { BundlerAPIClient } from "../utils/api-client.js";
 
 interface YamlTokenOptions {
@@ -10,7 +10,7 @@ interface YamlTokenOptions {
 
 export async function yamlTokenCommand(subscriptionName: string, options: YamlTokenOptions): Promise<void> {
   try {
-    const config = loadYamlConfig(options.config);
+    const config = loadYamlConfig(options.config, buildEnvForConfig(options.config));
 
     const entry = config.subscriptions.find(s => s.name === subscriptionName);
     if (!entry) {
@@ -30,7 +30,6 @@ export async function yamlTokenCommand(subscriptionName: string, options: YamlTo
     banner(" Token Generation ", { bg: BG_COLORS.YELLOW });
     console.log(`Subscription: ${subscriptionName}`);
     console.log(`Bundle:       ${entry.bundle}`);
-    console.log(`Registry:     ${entry.registry}`);
     console.log();
 
     const result = await client.generateSubscriptionToken(

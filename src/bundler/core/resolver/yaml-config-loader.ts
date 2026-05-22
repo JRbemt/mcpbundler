@@ -6,13 +6,12 @@
  * structure (MCPs, bundles, permissions) lives in the YAML file.
  *
  * Configuration blocks:
- *   definitions    - shared named resources: registries, MCPs, and LLM providers
- *   bundles        - bundles you author and publish to a registry (use `mcpbundler sync`)
+ *   definitions    - shared named resources: MCPs and LLM providers
+ *   bundles        - bundles you author and publish (use `mcpbundler sync`)
  *   subscriptions  - named subscriptions to a bundle; holds credentials and router config
  *
  * Three ways to include MCPs inside bundle blocks:
  *   local ref      - ref: <namespace>   references a named entry from definitions.mcps
- *   registry ref   - registry: <name>, namespace: <ns>   references an existing MCP on a named registry
  *   inline entry   - namespace + url + auth_strategy defined directly; sync creates or updates the MCP record
  *
  * Key naming convention:
@@ -22,7 +21,8 @@
  */
 
 import { readFileSync } from "fs";
-import { resolve } from "path";
+import { resolve, dirname, join } from "path";
+import { parse as parseDotenv } from "dotenv";
 import { parse } from "yaml";
 import { z } from "zod";
 import { MCPAuthConfigSchema, McpPermissionsSchema } from "../../../shared/domain/entities.js";
@@ -40,33 +40,16 @@ const YamlPermissionsSchema = z.object({
 }).transform(camelizeKeys);
 
 // Definitions block (definitions:)
-// Groups named registries, shared MCP declarations, and LLM providers.
+// Groups shared MCP declarations and LLM providers.
 
-const YamlRegistryAuthSchema = z.discriminatedUnion("method", [
-    z.object({
-        method: z.literal("oauth2"),
-        flow: z.enum(["authorization_code"]).optional(),
-    }),
-    z.object({
-        method: z.literal("bearer"),
-        token: z.string().min(1),
-    }),
-]);
-
-const YamlRegistrySchema = z.object({
-    name: z.string().min(1),
-    url: z.url(),
-    auth: YamlRegistryAuthSchema,
-});
-
-// An MCP that exists on a named registry — sync includes it in the bundle without modifying its definition.
+// An MCP that exists on a named registry — sync adds it to bundles by namespace
+// without creating or modifying the MCP record itself.
 const YamlRefMcpExternalSchema = z.object({
     namespace: z.string().regex(NAMESPACE_PATTERN, NAMESPACE_MESSAGE),
     registry: z.string().min(1),
 });
 
-// An inline shared MCP definition declared once and referenced by namespace in bundle blocks.
-// sync creates or updates this MCP on the target registry.
+// An inline MCP definition — sync creates or updates this MCP on the target instance.
 const YamlRefMcpInlineSchema = z.object({
     namespace: z.string().regex(NAMESPACE_PATTERN, NAMESPACE_MESSAGE),
     url: z.url(),
@@ -83,7 +66,6 @@ const YamlLlmBindingSchema = z.object({
 });
 
 const YamlDefinitionsSchema = z.object({
-    registries: z.array(YamlRegistrySchema).optional().default([]),
     mcps: z.array(YamlRefMcpSchema).optional().default([]),
     llms: z.array(LLMProviderConfigSchema).optional().default([]),
     llm_bindings: z.array(YamlLlmBindingSchema).optional().default([]),
@@ -127,7 +109,6 @@ const YamlBundleMcpEntrySchema = z.union([
 const YamlBundleDefSchema = z.object({
     name: z.string().min(1),
     description: z.string().optional(),
-    sync_to: z.array(z.object({ registry: z.string().min(1) })).optional(),
     mcps: z.array(YamlBundleMcpEntrySchema).default([]),
 });
 
@@ -147,8 +128,7 @@ const YamlSubscribeCredentialSchema = z.object({
 
 const YamlSubscribeSchema = z.object({
     name: z.string().min(1),
-    bundle: z.string().min(1),          // "publisher/bundle-name[@version]"
-    registry: z.string().min(1),        // name matching a definitions.registries entry
+    bundle: z.string().min(1),
     credentials: z.record(z.string(), YamlSubscribeCredentialSchema).optional(),
     router: BundleRouterConfigSchema,
 });
@@ -156,14 +136,13 @@ const YamlSubscribeSchema = z.object({
 // Top-level config
 
 export const YamlConfigSchema = z.object({
-    definitions: YamlDefinitionsSchema.optional().default({ registries: [], mcps: [], llms: [], llm_bindings: [] }),
+    definitions: YamlDefinitionsSchema.optional().default({ mcps: [], llms: [], llm_bindings: [] }),
     bundles: z.array(YamlBundleDefSchema).optional().default([]),
     subscriptions: z.array(YamlSubscribeSchema).optional().default([]),
 });
 
 export type YamlConfig = z.infer<typeof YamlConfigSchema>;
 export type YamlDefinitions = z.infer<typeof YamlDefinitionsSchema>;
-export type YamlRegistry = z.infer<typeof YamlRegistrySchema>;
 export type YamlRefMcp = z.infer<typeof YamlRefMcpSchema>;
 export type YamlRefMcpExternal = z.infer<typeof YamlRefMcpExternalSchema>;
 export type YamlRefMcpInline = z.infer<typeof YamlRefMcpInlineSchema>;
@@ -182,15 +161,15 @@ const ENV_VAR_PATTERN = /\$\{([^}]+)\}/g;
 
 /**
  * Recursively walks a parsed YAML object and replaces ${VAR_NAME} patterns
- * in string values with values from process.env.
+ * in string values with values from the supplied env map.
  *
  * Operating post-parse means YAML special characters in env var values
  * (e.g. colons, hashes, newlines) cannot corrupt the structure.
  */
-function interpolateEnvVars(node: unknown): unknown {
+function interpolateEnvVars(node: unknown, env: Record<string, string>): unknown {
     if (typeof node === "string") {
         return node.replace(ENV_VAR_PATTERN, (_, varName: string) => {
-            const value = process.env[varName];
+            const value = env[varName];
             if (value === undefined) {
                 throw new Error(`Environment variable "${varName}" referenced in YAML config is not set`);
             }
@@ -198,11 +177,11 @@ function interpolateEnvVars(node: unknown): unknown {
         });
     }
     if (Array.isArray(node)) {
-        return node.map(interpolateEnvVars);
+        return node.map(item => interpolateEnvVars(item, env));
     }
     if (node !== null && typeof node === "object") {
         return Object.fromEntries(
-            Object.entries(node as Record<string, unknown>).map(([k, v]) => [k, interpolateEnvVars(v)])
+            Object.entries(node as Record<string, unknown>).map(([k, v]) => [k, interpolateEnvVars(v, env)])
         );
     }
     return node;
@@ -213,9 +192,32 @@ function interpolateEnvVars(node: unknown): unknown {
  * ${VAR_NAME} references in string values are resolved from process.env
  * after YAML parsing, so env var contents cannot affect the YAML structure.
  *
+/**
+ * Builds the env map for YAML interpolation: parses a .env file from the same
+ * directory as the config, then merges with process.env (process.env wins).
+ *
  * @param configPath - Absolute or cwd-relative path to the YAML file
  */
-export function loadYamlConfig(configPath: string): YamlConfig {
+export function buildEnvForConfig(configPath: string): Record<string, string> {
+    const absolutePath = resolve(process.cwd(), configPath);
+    let fileEnv: Record<string, string> = {};
+    try {
+        const raw = readFileSync(join(dirname(absolutePath), ".env"), "utf-8");
+        fileEnv = parseDotenv(raw);
+    } catch {
+        // No .env next to the YAML — rely on process.env alone.
+    }
+    return { ...fileEnv, ...(process.env as Record<string, string>) };
+}
+
+/**
+ * Loads and validates a YAML bundle config file.
+ * ${VAR_NAME} references in string values are resolved from the supplied env map.
+ *
+ * @param configPath - Absolute or cwd-relative path to the YAML file
+ * @param env - Variable map used for interpolation; build with buildEnvForConfig()
+ */
+export function loadYamlConfig(configPath: string, env: Record<string, string>): YamlConfig {
     const absolutePath = resolve(process.cwd(), configPath);
 
     let raw: string;
@@ -233,7 +235,7 @@ export function loadYamlConfig(configPath: string): YamlConfig {
     }
 
     try {
-        parsed = interpolateEnvVars(parsed);
+        parsed = interpolateEnvVars(parsed, env);
     } catch (cause) {
         throw new Error(`YAML config env interpolation failed: ${cause}`);
     }

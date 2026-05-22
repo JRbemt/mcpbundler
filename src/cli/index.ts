@@ -47,8 +47,8 @@ program
   .command("sync")
   .description("create or update bundle definitions on registries (existing subscriptions and tokens are preserved)")
   .option("-c, --config <path>", "path to YAML config file", "mcpbundler.yaml")
-  .action((options) => {
-    syncCommand(options);
+  .action((_options, cmd) => {
+    syncCommand(cmd.optsWithGlobals());
   });
 
 program

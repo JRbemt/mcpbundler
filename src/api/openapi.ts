@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const { version } = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8")) as { version: string };
+const { version } = JSON.parse(readFileSync(join(__dirname, "../../../package.json"), "utf-8")) as { version: string };
 import { CreateMcpRequestSchema, UpdateMcpRequestSchema, MCPResponseSchema, BulkDeleteResponseSchema } from "./routes/utils/mcp-schemas.js";
 import {
   CreateBundleRequestSchema,

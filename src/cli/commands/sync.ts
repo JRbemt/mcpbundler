@@ -1,11 +1,11 @@
 import { banner, BG_COLORS } from "../utils/print-utils.js";
 import {
   loadYamlConfig,
+  buildEnvForConfig,
   YamlBundleDef,
   YamlBundleMcpEntry,
   YamlSubscribe,
   YamlConfig,
-  YamlRegistry,
   YamlLlmBinding,
 } from "../../bundler/core/resolver/yaml-config-loader.js";
 import { BundlerAPIClient } from "../utils/api-client.js";
@@ -41,8 +41,7 @@ function describeMcp(entry: YamlBundleMcpEntry): string {
 }
 
 function reportBundle(def: YamlBundleDef): void {
-  const targets = def.sync_to?.map(t => t.registry).join(", ") ?? "(no sync_to targets)";
-  console.log(`  ${def.name}  ->  ${targets}`);
+  console.log(`  ${def.name}`);
   for (const mcp of def.mcps) {
     console.log(`    ${describeMcp(mcp)}`);
   }
@@ -50,7 +49,7 @@ function reportBundle(def: YamlBundleDef): void {
 
 function reportSubscription(sub: YamlSubscribe): void {
   const credCount = sub.credentials ? Object.keys(sub.credentials).length : 0;
-  console.log(`  ${sub.name}  (bundle: ${sub.bundle}, registry: ${sub.registry})`);
+  console.log(`  ${sub.name}  (bundle: ${sub.bundle})`);
   if (credCount > 0) {
     console.log(`    Credentials: ${Object.keys(sub.credentials!).join(", ")}`);
   }
@@ -251,50 +250,6 @@ function collectBundleInlineMcps(
   return result;
 }
 
-/**
- * Build a BundlerAPIClient for a named registry.
- * Returns null if the registry is not found or uses OAuth2 (not yet supported).
- */
-function clientForRegistry(
-  registryName: string,
-  config: YamlConfig
-): BundlerAPIClient | null {
-  const reg = config.definitions.registries.find(r => r.name === registryName);
-  if (!reg) {
-    console.warn(`  Registry "${registryName}" not found in definitions.registries - skipping`);
-    return null;
-  }
-  if (reg.auth.method === "oauth2") {
-    console.warn(`  Registry "${registryName}" uses OAuth2 authentication which is not yet supported - skipping`);
-    return null;
-  }
-  return new BundlerAPIClient(reg.url, reg.auth.token);
-}
-
-/**
- * Push a single bundle (and its inline MCPs) to a named remote registry.
- */
-async function syncBundleToRegistry(
-  bundleDef: YamlBundleDef,
-  registryName: string,
-  config: YamlConfig
-): Promise<void> {
-  const client = clientForRegistry(registryName, config);
-  if (!client) return;
-
-  console.log(`  Pushing bundle "${bundleDef.name}" to registry "${registryName}"...`);
-
-  const bundleInlineMcps = collectBundleInlineMcps(bundleDef, config);
-  for (const [namespace, mcpData] of bundleInlineMcps) {
-    await upsertMcpByNamespace(client, namespace, mcpData);
-  }
-
-  const myBundles = await client.listMyBundles().catch(() => [] as BundleResponse[]);
-  const bundleId = await syncBundleDef(client, bundleDef, myBundles);
-  if (bundleId) {
-    console.log(`  Bundle "${bundleDef.name}" synced to registry "${registryName}" (${bundleId})`);
-  }
-}
 
 /**
  * Upsert a single subscription by name.
@@ -354,7 +309,7 @@ async function syncSubscription(
  */
 export async function syncCommand(options: SyncOptions): Promise<void> {
   try {
-    const config = loadYamlConfig(options.config);
+    const config = loadYamlConfig(options.config, buildEnvForConfig(options.config));
 
     const hasBundles = config.bundles.length > 0;
     const hasSubs = config.subscriptions.length > 0;
@@ -446,20 +401,6 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
       console.log(`Phase 3: Syncing ${config.subscriptions.length} subscription(s)...`);
       for (const sub of config.subscriptions) {
         await syncSubscription(client, sub, bundleIdByName, myBundles);
-      }
-      console.log();
-    }
-
-    // Remote registry push: for each bundle with sync_to targets, push to each named registry
-    const bundlesWithRemoteTargets = config.bundles.filter(
-      b => b.sync_to && b.sync_to.length > 0
-    );
-    if (bundlesWithRemoteTargets.length > 0) {
-      console.log(`Remote registry push: ${bundlesWithRemoteTargets.length} bundle(s) have sync_to targets...`);
-      for (const bundleDef of bundlesWithRemoteTargets) {
-        for (const target of bundleDef.sync_to!) {
-          await syncBundleToRegistry(bundleDef, target.registry, config);
-        }
       }
       console.log();
     }
