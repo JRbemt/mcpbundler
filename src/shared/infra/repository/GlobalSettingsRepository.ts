@@ -25,24 +25,11 @@ export class GlobalSettingsRepository {
    * @returns Global settings with parsed permission array
    */
   async get() {
-    let settings = await this.prisma.globalSettings.findUnique({
-      where: { id: 'global' }
+    return await this.prisma.globalSettings.upsert({
+      where: { id: 'global' },
+      update: {},
+      create: { id: 'global', allowSelfServiceRegistration: false, defaultSelfServicePermissions: [] },
     });
-
-    if (!settings) {
-      settings = await this.prisma.globalSettings.create({
-        data: {
-          id: 'global',
-          allowSelfServiceRegistration: false,
-          defaultSelfServicePermissions: '[]'
-        }
-      });
-    }
-
-    return {
-      ...settings,
-      defaultSelfServicePermissions: JSON.parse(settings.defaultSelfServicePermissions) as PermissionType[]
-    };
   }
 
   /**
@@ -56,22 +43,10 @@ export class GlobalSettingsRepository {
    * @returns Updated global settings with parsed permission array
    */
   async updateSelfServiceSettings(enabled: boolean, defaultPermissions: PermissionType[]) {
-    const settings = await this.prisma.globalSettings.upsert({
+    return await this.prisma.globalSettings.upsert({
       where: { id: 'global' },
-      update: {
-        allowSelfServiceRegistration: enabled,
-        defaultSelfServicePermissions: JSON.stringify(defaultPermissions)
-      },
-      create: {
-        id: 'global',
-        allowSelfServiceRegistration: enabled,
-        defaultSelfServicePermissions: JSON.stringify(defaultPermissions)
-      }
+      update: { allowSelfServiceRegistration: enabled, defaultSelfServicePermissions: defaultPermissions },
+      create: { id: 'global', allowSelfServiceRegistration: enabled, defaultSelfServicePermissions: defaultPermissions },
     });
-
-    return {
-      ...settings,
-      defaultSelfServicePermissions: JSON.parse(settings.defaultSelfServicePermissions) as PermissionType[]
-    };
   }
 }

@@ -100,7 +100,7 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
           id: user.id,
           name: user.name,
           isAdmin: user.isAdmin,
-          permissions: user.permissions.map(p => p.permission),
+          permissions: user.permissions,
         };
       },
       {
@@ -149,7 +149,7 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
           id: user.id,
           name: user.name,
           isAdmin: user.isAdmin,
-          permissions: user.permissions.map(p => p.permission),
+          permissions: user.permissions,
         };
       },
       {
@@ -218,9 +218,7 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
           );
         }
 
-        const newPermissions = [
-          ...new Set([...targetUser.permissions.map(p => p.permission), ...data.permissions]),
-        ];
+        const newPermissions = [...new Set([...targetUser.permissions, ...data.permissions])];
 
         return {
           id: targetUser.id,
@@ -294,9 +292,7 @@ export function createPermissionRoutes(authMiddleware: RequestHandler, prisma: P
           );
         }
 
-        const newPermissions = targetUser.permissions
-          .map(p => p.permission)
-          .filter(p => !data.permissions.includes(p));
+        const newPermissions = targetUser.permissions.filter(p => !data.permissions.includes(p));
 
         return {
           id: targetUser.id,

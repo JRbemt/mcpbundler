@@ -14,7 +14,7 @@
  * @see schema.prisma
  */
 
-import { PrismaClient, PrismaClientKnownRequestError } from "../../domain/entities.js";
+import { PrismaClient } from "../../domain/entities.js";
 import { Repository } from "../../domain/Repository.js";
 import { ApiUser, CreatedApiUser, PermissionType } from "../../domain/entities.js";
 import { generateApiKey, hashApiKey } from "../../utils/encryption.js";
@@ -74,14 +74,10 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
       where: { id: record.id },
       data: { lastUsedAt: new Date() },
       include: {
-        permissions: true,
         createdBy: {
-          select: {
-            id: true,
-            name: true,
-          }
+          select: { id: true, name: true },
         },
-      }
+      },
     });
 
     return updatedRecord;
@@ -166,42 +162,32 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
   ): Promise<number> {
     let affectedCount = 0;
 
-    // Add permission to this user
-    try {
-      await this.client.apiUserPermission.create({
-        data: {
-          userId,
-          permission,
-        },
-      });
-      affectedCount++;
-    } catch (error) {
-      if (error instanceof PrismaClientKnownRequestError && error.code === "P2002") {
-        logger.debug({ userId, permission }, "Permission already exists");
-        affectedCount++;
-      } else {
-        throw error;
-      }
-    }
+    const user = await this.client.apiUser.findUnique({
+      where: { id: userId },
+      select: { permissions: true },
+    });
 
-    // Cascade to descendants if requested
+    if (user && !user.permissions.includes(permission)) {
+      await this.client.apiUser.update({
+        where: { id: userId },
+        data: { permissions: [...user.permissions, permission] },
+      });
+    }
+    affectedCount++;
+
     if (propagate) {
       const createdUsers = await this.client.apiUser.findMany({
         where: { createdById: userId, revokedAt: null },
         select: { id: true },
       });
 
-      for (const user of createdUsers) {
-        const descendantCount = await this.addPermission(user.id, permission, granterId, true);
+      for (const child of createdUsers) {
+        const descendantCount = await this.addPermission(child.id, permission, granterId, true);
         affectedCount += descendantCount;
       }
     }
 
-    logger.info(
-      { userId, permission, granterId, affectedCount, propagate },
-      "Added permission"
-    );
-
+    logger.info({ userId, permission, granterId, affectedCount, propagate }, "Added permission");
     return affectedCount;
   }
 
@@ -219,34 +205,29 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
   async removePermission(userId: string, permission: PermissionType): Promise<number> {
     let affectedCount = 0;
 
-    // Remove permission from this user
-    const result = await this.client.apiUserPermission.deleteMany({
-      where: {
-        userId,
-        permission,
-      },
+    const user = await this.client.apiUser.findUnique({
+      where: { id: userId },
+      select: { permissions: true },
     });
 
-    if (result.count > 0) {
+    if (user && user.permissions.includes(permission)) {
+      await this.client.apiUser.update({
+        where: { id: userId },
+        data: { permissions: user.permissions.filter(p => p !== permission) },
+      });
       affectedCount++;
     }
 
-    // Always cascade to descendants
     const createdUsers = await this.client.apiUser.findMany({
       where: { createdById: userId, revokedAt: null },
       select: { id: true },
     });
 
-    for (const user of createdUsers) {
-      const descendantCount = await this.removePermission(user.id, permission);
-      affectedCount += descendantCount;
+    for (const child of createdUsers) {
+      affectedCount += await this.removePermission(child.id, permission);
     }
 
-    logger.info(
-      { userId, permission, affectedCount },
-      "Removed permission with cascade"
-    );
-
+    logger.info({ userId, permission, affectedCount }, "Removed permission with cascade");
     return affectedCount;
   }
 
@@ -254,10 +235,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
     return this.client.apiUser.findUnique({
       where: { id },
       include: {
-        permissions: true,
-        createdBy: {
-          select: { id: true, name: true },
-        },
+        createdBy: { select: { id: true, name: true } },
       },
     });
   }
@@ -333,8 +311,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
       return true;
     }
 
-    const granterPermissions = granter.permissions.map(p => p.permission);
-    return permissions.every(p => granterPermissions.includes(p));
+    return permissions.every(p => granter.permissions.includes(p));
   }
 
   /**
@@ -422,7 +399,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
    * @returns Object containing the API user record (with permissions) and plaintext key
    */
   async createWithPermissions(
-    item: Omit<ApiUser, "id" | "createdAt" | "updatedAt" | "lastUsedAt" | "keyHash">,
+    item: Omit<ApiUser, "id" | "createdAt" | "updatedAt" | "lastUsedAt" | "keyHash" | "permissions">,
     permissions: PermissionType[]
   ): Promise<{ record: CreatedApiUser, key: string }> {
     const key = generateApiKey();
@@ -431,20 +408,12 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
     const record = await this.client.apiUser.create({
       data: {
         ...item,
-        keyHash: keyHash,
-        permissions: {
-          create: Array.from(permissions, permission => ({ permission })),
-        },
+        keyHash,
+        permissions,
         createdAt: new Date(),
       },
       include: {
-        permissions: true,
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-          }
-        }
+        createdBy: { select: { id: true, name: true } },
       },
     });
 
@@ -531,15 +500,8 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
    */
   async getCreatedUsers(creatorId: string): Promise<CreatedApiUser[]> {
     return await this.client.apiUser.findMany({
-      where: {
-        createdById: creatorId,
-      },
-      include: {
-        permissions: true,
-        createdBy: {
-          select: { id: true, name: true },
-        },
-      },
+      where: { createdById: creatorId },
+      include: { createdBy: { select: { id: true, name: true } } },
     });
   }
 
@@ -572,12 +534,7 @@ export class ApiUserRepository implements Repository<ApiUser, "id"> {
     const where = options?.includeRevoked ? {} : { revokedAt: null };
     return await this.client.apiUser.findMany({
       where,
-      include: {
-        permissions: true,
-        createdBy: {
-          select: { id: true, name: true },
-        },
-      },
+      include: { createdBy: { select: { id: true, name: true } } },
       orderBy: { createdAt: "desc" },
     });
   }

@@ -106,7 +106,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
 
         return {
           ...record,
-          permissions: record.permissions.map(p => p.permission),
+          permissions: record.permissions,
           apiKey: key,
         };
       },
@@ -176,7 +176,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
 
         return {
           ...record,
-          permissions: record.permissions.map(p => p.permission),
+          permissions: record.permissions,
           apiKey: key,
         };
       },
@@ -209,10 +209,10 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
 
         return {
           ...user,
-          permissions: user.permissions.map(p => p.permission),
+          permissions: user.permissions,
           createdUsers: createdUsers.map(u => ({
             ...u,
-            permissions: u.permissions.map(p => p.permission),
+            permissions: u.permissions,
           })),
         };
       },
@@ -329,7 +329,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
 
         return users.map(u => ({
           ...u,
-          permissions: u.permissions.map(p => p.permission),
+          permissions: u.permissions,
         }));
       },
       {
@@ -359,7 +359,7 @@ export function createUserRoutes(authMiddleware: RequestHandler, prisma: PrismaC
         const full = await apiUserRepo.getWithPermissions(user.id);
         return {
           ...full!,
-          permissions: full!.permissions.map(p => p.permission),
+          permissions: full!.permissions,
         };
       },
       {

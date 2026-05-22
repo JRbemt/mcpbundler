@@ -28,11 +28,10 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from "../../shared/domain/entities.js";
+import { PrismaClient, PermissionType } from "../../shared/domain/entities.js";
 import { ApiUserRepository } from '../../shared/infra/repository/index.js';
 import { auditApiLog, AuditApiAction } from '../../shared/utils/audit-log.js';
 import { AsyncLocalStorage } from 'async_hooks';
-import { PermissionType } from "../../shared/domain/entities.js"
 import logger from '../../shared/utils/logger.js';
 import { API_KEY_PREFIX } from '../../shared/utils/encryption.js';
 
@@ -135,10 +134,9 @@ export function createAuthMiddleware(prisma: PrismaClient) {
         apiKeyName: apiUser.name,
         contact: apiUser.contact,
         isAdmin: apiUser.isAdmin,
-        permissions: apiUser.permissions.map((p: { permission: PermissionType }) => p.permission),
+        permissions: apiUser.permissions,
         createdById: apiUser.createdById
       };
-
 
       STORE.run(req, () => {
         auditApiLog({
@@ -149,7 +147,7 @@ export function createAuthMiddleware(prisma: PrismaClient) {
             method: req.method,
             userId: apiUser.id,
             isAdmin: apiUser.isAdmin,
-            permissions: apiUser.permissions.map((p: { permission: PermissionType }) => p.permission)
+            permissions: apiUser.permissions,
           },
         }, req);
         next();

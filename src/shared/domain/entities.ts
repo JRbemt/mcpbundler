@@ -10,7 +10,7 @@ export type CreatedBundle = Prisma.BundleGetPayload<{
 }>;
 
 export type CreatedApiUser = Prisma.ApiUserGetPayload<{
-    include: { permissions: true, createdBy: { select: { name: true, id: true } } };
+    include: { createdBy: { select: { name: true, id: true } } };
 }>;
 
 /**

@@ -141,7 +141,7 @@ model ApiUser {
   createdBy   ApiUser?    @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   createdUsers       ApiUser[]            @relation("CreatedBy")
-  permissions        ApiUserPermission[]
+  permissions        PermissionType[]
   createdBundles     Bundle[]             @relation("BundleCreator")
   createdMcps        Mcp[]                @relation("McpCreator")
   createdTokens      BundleAccessToken[]  @relation("BundleTokenCreator")
@@ -198,22 +198,11 @@ enum PermissionType {
   VIEW_PERMISSIONS
 }
 
-model ApiUserPermission {
-  id         String         @id @default(uuid())
-  userId     String         @map("user_id")
-  user       ApiUser        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  permission PermissionType @map("permission_type")
-
-  @@unique([userId, permission])
-  @@index([permission])
-  @@map("api_user_permission")
-}
-
 // Global settings for self-service registration and other system-wide configs
 model GlobalSettings {
-  id                            String  @id @default("global")
-  allowSelfServiceRegistration  Boolean @default(false) @map("allow_self_service_registration")
-  defaultSelfServicePermissions String  @default("[]")  @map("default_self_service_permissions") // JSON array of PermissionType
+  id                            String           @id @default("global")
+  allowSelfServiceRegistration  Boolean          @default(false) @map("allow_self_service_registration")
+  defaultSelfServicePermissions PermissionType[] @default([]) @map("default_self_service_permissions")
 
   @@map("global_settings")
 }
