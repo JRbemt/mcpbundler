@@ -7,17 +7,20 @@
  * updated when keys rotate.
  *
  * Endpoints:
- * - POST   /api/subscriptions               - Upsert subscription by name
- * - GET    /api/subscriptions               - List subscriptions for authenticated user
- * - GET    /api/subscriptions/:name         - Get single subscription
- * - DELETE /api/subscriptions/:name         - Remove subscription and its tokens
- * - POST   /api/subscriptions/:name/token   - Generate access token for subscription
+ * - POST   /api/subscriptions                        - Upsert subscription by name
+ * - GET    /api/subscriptions                        - List subscriptions for authenticated user
+ * - GET    /api/subscriptions/:name                  - Get single subscription
+ * - DELETE /api/subscriptions/:name                  - Remove subscription and its tokens
+ * - POST   /api/subscriptions/:name/token            - Generate access token for subscription
+ * - GET    /api/subscriptions/:name/tokens           - List tokens for a subscription
+ * - DELETE /api/subscriptions/:name/tokens/:tokenId  - Revoke a token
  */
 
 import express, { Request, Router } from "express";
 import { z } from "zod";
 import { PrismaClient } from "../../shared/domain/entities.js";
 import { BundleRepository, BundleTokenRepository, SubscriptionRepository } from "../../shared/infra/repository/index.js";
+import { ListTokenResponseSchema } from "./utils/bundle-schemas.js";
 import {
   validatedBodyHandler,
   validatedHandler,
@@ -257,6 +260,66 @@ export function createSubscriptionRoutes(prisma: PrismaClient): Router {
           tokenId: result?.tokenId,
           subscriptionId: result?.subscriptionId,
         }),
+      }
+    )
+  );
+
+  /**
+   * GET /api/subscriptions/:name/tokens
+   * List all tokens for a subscription
+   */
+  router.get(
+    "/:name/tokens",
+    validatedHandler(
+      ListTokenResponseSchema,
+      async (req: Request<{ name: string }>, res) => {
+        const sub = await subscriptionRepo.findByName(req.params.name, req.apiAuth!.userId);
+        if (!sub) {
+          return sendNotFound(res, "Subscription", req, AuditApiAction.SUBSCRIPTION_VIEW, {
+            name: req.params.name,
+          });
+        }
+        return tokenRepo.list(sub.bundleId, sub.id);
+      },
+      {
+        action: AuditApiAction.SUBSCRIPTION_VIEW,
+        errorMessage: "Failed to list subscription tokens",
+        getAuditDetails: (req) => ({ name: req.params.name }),
+      }
+    )
+  );
+
+  /**
+   * DELETE /api/subscriptions/:name/tokens/:tokenId
+   * Revoke a token belonging to a subscription
+   */
+  router.delete(
+    "/:name/tokens/:tokenId",
+    validatedHandler(
+      null,
+      async (req: Request<{ name: string; tokenId: string }>, res) => {
+        const sub = await subscriptionRepo.findByName(req.params.name, req.apiAuth!.userId);
+        if (!sub) {
+          return sendNotFound(res, "Subscription", req, AuditApiAction.TOKEN_REVOKE, {
+            name: req.params.name,
+          });
+        }
+
+        const token = await tokenRepo.findById(req.params.tokenId);
+        if (!token || token.subscriptionId !== sub.id) {
+          return sendNotFound(res, "Token", req, AuditApiAction.TOKEN_REVOKE, {
+            tokenId: req.params.tokenId,
+          });
+        }
+
+        await tokenRepo.delete(req.params.tokenId);
+        logger.info({ tokenId: req.params.tokenId, subscriptionId: sub.id }, "Revoked subscription token");
+      },
+      {
+        action: AuditApiAction.TOKEN_REVOKE,
+        successStatus: 204,
+        errorMessage: "Failed to revoke token",
+        getAuditDetails: (req) => ({ tokenId: req.params.tokenId, name: req.params.name }),
       }
     )
   );

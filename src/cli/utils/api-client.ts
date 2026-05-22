@@ -3,8 +3,7 @@ import type {
   CreateBundleRequest,
   UpdateBundleRequest,
   CreateBundleResponse,
-  GenerateTokenRequest,
-  GenerateTokenResponse,
+  ListTokenResponse,
   AddMcpsByNamespaceRequest,
   AddMcpByNamespaceResponse,
   BundleResponse,
@@ -36,12 +35,11 @@ import type {
 export type Mcp = McpResponse;
 export type ApiUser = UserResponse;
 export type ApiUserWithCreatedUsers = UserResponseWithCreatedUsers;
-export type Token = GenerateTokenResponse;
 export type PermissionTypes = PermissionListResponse;
 
 // MCP (used in CLI commands)
 // Re-export bundle API types for CLI use
-export { CreateBundleRequest, CreateBundleResponse, GenerateTokenRequest, GenerateTokenResponse };
+export { CreateBundleRequest, CreateBundleResponse };
 export type AddMcpRequest = AddMcpsByNamespaceRequest;
 export type AddMcpResponse = AddMcpByNamespaceResponse;
 export { AddMcpsByNamespaceRequest };
@@ -156,35 +154,18 @@ export class BundlerAPIClient {
   }
 
   /**
-   * Generate access token for a bundle
+   * List all tokens for a subscription
    */
-  async generateToken(
-    bundleId: string,
-    name: string,
-    description?: string,
-    expiresAt?: string
-  ): Promise<GenerateTokenResponse> {
-    const response = await this.client.post(`/api/bundles/${bundleId}/tokens`, {
-      name,
-      description,
-      expiresAt,
-    });
+  async listSubscriptionTokens(name: string): Promise<ListTokenResponse> {
+    const response = await this.client.get(`/api/subscriptions/${encodeURIComponent(name)}/tokens`);
     return response.data;
   }
 
   /**
-   * List all tokens for a bundle
+   * Revoke a token belonging to a subscription
    */
-  async listBundleTokens(bundleId: string): Promise<Token[]> {
-    const response = await this.client.get(`/api/bundles/${bundleId}/tokens`);
-    return response.data;
-  }
-
-  /**
-   * Revoke/delete a bundle token
-   */
-  async revokeBundleToken(bundleId: string, tokenId: string): Promise<void> {
-    await this.client.delete(`/api/bundles/${bundleId}/tokens/${tokenId}`);
+  async revokeSubscriptionToken(name: string, tokenId: string): Promise<void> {
+    await this.client.delete(`/api/subscriptions/${encodeURIComponent(name)}/tokens/${tokenId}`);
   }
 
   /**

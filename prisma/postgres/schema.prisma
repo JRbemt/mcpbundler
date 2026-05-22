@@ -107,8 +107,8 @@ model BundleAccessToken {
   id             String        @id @default(uuid())
   bundleId       String        @map("bundle_id")
   bundle         Bundle        @relation(fields: [bundleId], references: [id], onDelete: Cascade)
-  subscriptionId String?       @map("subscription_id")
-  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  subscriptionId String        @map("subscription_id")
+  subscription   Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   name           String
   description    String?
   tokenHash      String        @unique @map("token_hash") // SHA-256 hash

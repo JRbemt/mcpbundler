@@ -9,8 +9,8 @@ import { createBundlesCommand } from "./commands/bundle/index.js";
 import { HELP_FOOTER } from "./utils/print-utils.js";
 import { toStdioCommand } from "./commands/client/stdio.js";
 import { createUserCommand } from "./commands/user/index.js";
+import { createSubscriptionCommand } from "./commands/subscription/index.js";
 import { syncCommand } from "./commands/sync.js";
-import { yamlTokenCommand } from "./commands/yaml-token.js";
 
 // Load package.json metadata
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,6 +34,7 @@ program
 program.addCommand(createMcpsCommand());
 program.addCommand(createBundlesCommand());
 program.addCommand(createUserCommand());
+program.addCommand(createSubscriptionCommand());
 program.command("stdio")
   .description("connect to bundler and expose as an STDIO Server for local integrations")
   .option("-b, --bundle <token>", "Bundle-token", "")
@@ -49,14 +50,6 @@ program
   .option("-c, --config <path>", "path to YAML config file", "mcpbundler.yaml")
   .action((_options, cmd) => {
     syncCommand(cmd.optsWithGlobals());
-  });
-
-program
-  .command("token <subscription-name>")
-  .description("generate an access token for a named subscription (YAML mode, requires --token)")
-  .option("-c, --config <path>", "path to YAML config file", "mcpbundler.yaml")
-  .action((subscriptionName, _options, cmd) => {
-    yamlTokenCommand(subscriptionName, cmd.optsWithGlobals());
   });
 
 program.addHelpText("after", HELP_FOOTER);

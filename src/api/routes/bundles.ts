@@ -14,8 +14,7 @@
  * - DELETE /api/bundles/:id                  - Delete bundle (owner or admin)
  * - DELETE /api/bundles/:id/:namespace       - Remove MCP from bundle
  *
- * Token endpoints:
- * - POST   /api/bundles/:id/tokens           - Generate token
+ * Token endpoints (read/revoke only - generation is via subscriptions):
  * - GET    /api/bundles/:id/tokens           - List tokens
  * - DELETE /api/bundles/:id/tokens/:tokenId  - Revoke token
  */
@@ -33,21 +32,17 @@ import { MCPResponseSchema, McpResponse } from "./utils/mcp-schemas.js";
 import {
   CreateBundleRequestSchema,
   UpdateBundleRequestSchema,
-  GenerateTokenRequestSchema,
   AddMcpsByNamespaceRequestSchema,
   BundleResponseSchema,
   CreateBundleResponseSchema,
   ListTokenResponseSchema,
-  GenerateTokenResponseSchema,
   AddMcpByNamespaceResponseSchema,
   BundleResponse,
   CreateBundleResponse,
-  GenerateTokenResponse,
   ListTokenResponse,
   AddMcpByNamespaceResponse,
   CreateBundleRequest,
   UpdateBundleRequest,
-  GenerateTokenRequest,
   AddMcpsByNamespaceRequest,
 } from "./utils/bundle-schemas.js";
 import { AuditApiAction } from "../../shared/utils/audit-log.js";
@@ -80,10 +75,8 @@ function toBundleResponse(bundle: BundleWithMcpsAndCreator): BundleResponse {
 export type {
   CreateBundleRequest,
   UpdateBundleRequest,
-  GenerateTokenRequest,
   AddMcpsByNamespaceRequest,
   CreateBundleResponse,
-  GenerateTokenResponse,
   BundleResponse,
   ListTokenResponse,
   AddMcpByNamespaceResponse,
@@ -415,47 +408,6 @@ export function createBundleRoutes(prisma: PrismaClient): Router {
         getAuditDetails: (req) => ({
           bundleId: req.params.id,
           namespace: req.params.namespace,
-        }),
-      }
-    )
-  );
-
-  /**
-   * POST /api/bundles/:id/tokens
-   */
-  router.post(
-    "/:id/tokens",
-    ...validatedBodyHandler(
-      GenerateTokenRequestSchema,
-      GenerateTokenResponseSchema,
-      async (req: Request<{ id: string }>, res, data: GenerateTokenRequest) => {
-        const bundle = await bundleRepo.findById(req.params.id);
-        if (!bundle) {
-          return sendNotFound(res, "Bundle", req, AuditApiAction.TOKEN_CREATE, {
-            bundleId: req.params.id,
-          });
-        }
-
-        const expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
-        const { record, token } = await tokenRepo.create({
-          bundleId: req.params.id,
-          name: data.name,
-          description: data.description ?? null,
-          createdById: req.apiAuth!.userId,
-          expiresAt,
-          revoked: false,
-          lastUsedAt: null,
-        });
-
-        logger.info({ bundleId: req.params.id, tokenId: record.id }, "Generated token");
-        return { ...record, token };
-      },
-      {
-        action: AuditApiAction.TOKEN_CREATE,
-        successStatus: 201,
-        errorMessage: "Failed to generate token",
-        getAuditDetails: (_req, result) => ({
-          tokenId: result?.id,
         }),
       }
     )

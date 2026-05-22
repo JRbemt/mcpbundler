@@ -158,17 +158,13 @@ export class DBBundleResolver implements ResolverService {
       "Successfully resolved bundle from token"
     );
 
-    // Resolve credentials: subscription-level blob takes precedence over legacy per-token credentials
+    // Load subscription credentials and router
     let subscriptionCredentials: Record<string, MCPAuthConfig> | undefined;
-    let subscriptionRouter: BundleRouterConfig;
-
-    if (tokenRecord.subscriptionId) {
-      const sub = await this.subscriptionRepo.findById(tokenRecord.subscriptionId);
-      if (sub?.credentials) {
-        subscriptionCredentials = this.subscriptionRepo.decryptCredentials(sub.credentials);
-      }
-      subscriptionRouter = sub?.router ? this.parseRouterConfig(sub.router) : undefined;
+    const sub = await this.subscriptionRepo.findById(tokenRecord.subscriptionId);
+    if (sub?.credentials) {
+      subscriptionCredentials = this.subscriptionRepo.decryptCredentials(sub.credentials);
     }
+    const subscriptionRouter = sub?.router ? this.parseRouterConfig(sub.router) : undefined;
 
     // Token-level router overrides subscription router
     let router = this.parseRouterConfig(tokenRecord.router ?? null) ?? subscriptionRouter;

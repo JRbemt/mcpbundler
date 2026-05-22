@@ -4,7 +4,6 @@ import { createBundleCommand } from "./create.js";
 import { removeBundleCommand } from "./remove.js";
 import { showBundleCommand } from "./show.js";
 import { HELP_FOOTER } from "../../utils/print-utils.js";
-import { createTokenCommand } from "./token/index.js";
 import { createBundleMcpCommand } from "./mcp/index.js";
 
 
@@ -15,7 +14,6 @@ export function createBundlesCommand(): Command {
     .showSuggestionAfterError();
 
   command.addCommand(createBundleMcpCommand());
-  command.addCommand(createTokenCommand());
 
   command
     .command("list")
