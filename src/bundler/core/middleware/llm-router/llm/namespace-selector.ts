@@ -83,21 +83,16 @@ export class LLMNamespaceSelector implements LLMRouterTool {
 
         const systemPrompt = buildSystemPrompt(availableUpstreams, maxUpstreams);
 
-        try {
-            const raw = await this.client.complete(systemPrompt, context);
-            const selected = parseNamespaces(raw, availableUpstreams);
+        // Throws on network / HTTP error — caller decides how to handle.
+        const raw = await this.client.complete(systemPrompt, context);
+        const selected = parseNamespaces(raw, availableUpstreams);
 
-            if (selected.length === 0) {
-                logger.warn({ context }, "LLM returned no valid namespaces — falling back to all-pass");
-                return availableUpstreams.slice(0, maxUpstreams).map((u) => u.namespace);
-            }
-
-            logger.debug({ selected, context }, "LLM namespace selection complete");
-            return selected;
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            logger.error({ err: msg, context }, "LLM namespace selector failed — falling back to all-pass");
+        if (selected.length === 0) {
+            logger.warn({ context }, "LLM returned no valid namespaces — falling back to all-pass");
             return availableUpstreams.slice(0, maxUpstreams).map((u) => u.namespace);
         }
+
+        logger.debug({ selected, context }, "LLM namespace selection complete");
+        return selected;
     }
 }

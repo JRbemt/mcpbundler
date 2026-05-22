@@ -1,6 +1,7 @@
 import { MCPConfig } from "../../schemas.js";
 import { MiddlewareContext } from "../middleware.js";
 import { LLMRouterTool } from "./router-tool.js";
+import logger from "../../../../shared/utils/logger.js";
 
 /**
  * Shared ranking state for the LLM tool router.
@@ -36,7 +37,28 @@ export class LLMRouterEngine {
         if (!context) return false;
 
         const available = ctx.getAvailableUpstreams();
-        const selected = await this.llm.selectNamespaces(context, available, maxActiveUpstreams);
+
+        let selected: string[];
+        try {
+            selected = await this.llm.selectNamespaces(context, available, maxActiveUpstreams);
+        } catch (err) {
+            // LLM call failed (network error, 4xx/5xx). Attach all available upstreams so
+            // progressive-mode sessions can still discover tools, but keep isInitialized=false
+            // so transformToolList stays in all-pass mode instead of filtering to nothing.
+            logger.warn(
+                { err: err instanceof Error ? err.message : String(err), context },
+                "LLM namespace selection failed — keeping all-pass, attaching all upstreams"
+            );
+            const attachedSet = new Set(ctx.getAttachedNamespaces());
+            for (const config of available.slice(0, maxActiveUpstreams)) {
+                if (!attachedSet.has(config.namespace)) {
+                    await ctx.attachUpstream(config).catch((e: Error) =>
+                        logger.debug({ namespace: config.namespace, err: e.message }, "Upstream attach skipped during fallback")
+                    );
+                }
+            }
+            return false;
+        }
 
         const attachedSet = new Set(ctx.getAttachedNamespaces());
         const availableByNs = new Map<string, MCPConfig>(available.map((u) => [u.namespace, u]));

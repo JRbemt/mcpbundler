@@ -14,8 +14,8 @@ definitions:
   # The server seeds "claude", "chatgpt", and "gemini" as named providers at startup.
   # sync Phase 0 pushes these bindings (encrypted) to the server.
   llm_bindings:
-    - provider: claude
-      api_key: "${ANTHROPIC_API_KEY}"
+    - provider: gemma
+      api_key: "${GOOGLE_API_KEY}"
 
   # Shared MCP definitions - referenced by bundle entries via ref:
   mcps:
@@ -73,7 +73,7 @@ subscriptions:
     bundle: test-bundle
     registry: local
     router:
-      model: claude
+      model: gemma
       set_context:
         enabled: true
         max_active_upstreams: 5

@@ -307,9 +307,9 @@ export class Session extends EventEmitter {
         this.addDomainEvent(createUpstreamConnected(this.id, config.namespace, config.url));
         logger.info({ sessionId: this.id, namespace: config.namespace, url: config.url }, "Upstream attached");
 
-        // In PROGRESSIVE mode notify the client immediately so it can refresh
-        // its tool list without waiting for all upstreams to connect.
-        if (this.loadingStrategy === LoadingStrategy.PROGRESSIVE) {
+        // In PROGRESSIVE mode notify the client that the tool list has grown —
+        // but only if the upstream actually connected (a failed upstream adds no tools).
+        if (this.loadingStrategy === LoadingStrategy.PROGRESSIVE && connector.isConnected()) {
             this.emitListChanged();
         }
 

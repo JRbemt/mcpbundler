@@ -136,6 +136,7 @@ export async function main() {
         { name: "claude", model: "claude-3-5-haiku-20241022", endpoint: "https://api.anthropic.com/v1", description: "Anthropic Claude" },
         { name: "chatgpt", model: "gpt-4o-mini", endpoint: "https://api.openai.com/v1", description: "OpenAI ChatGPT" },
         { name: "gemini", model: "gemini-2.0-flash", endpoint: "https://generativelanguage.googleapis.com/v1beta/openai", description: "Google Gemini" },
+        { name: "gemma", model: "gemma-3-4b-it", endpoint: "https://generativelanguage.googleapis.com/v1beta/openai", description: "Google Gemma 3 (Google AI Studio)" },
       ]);
 
       const authMiddleware = createAuthMiddleware(prisma);
