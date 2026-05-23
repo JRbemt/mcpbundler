@@ -24,6 +24,7 @@ type InlineMcpData = {
   stateless: boolean;
   authStrategy: "MASTER" | "USER_SET" | "NONE";
   auth?: Record<string, unknown>;
+  capabilities: string[];
 };
 
 function classifyMcp(entry: YamlBundleMcpEntry): "local-ref" | "registry-ref" | "inline" {
@@ -70,6 +71,7 @@ function collectInlineMcps(config: YamlConfig): Map<string, InlineMcpData> {
         stateless: mcp.stateless,
         authStrategy: mcp.auth ? "MASTER" : "NONE",
         auth: mcp.auth as Record<string, unknown> | undefined,
+        capabilities: mcp.capabilities ?? [],
       });
     }
   }
@@ -83,6 +85,7 @@ function collectInlineMcps(config: YamlConfig): Map<string, InlineMcpData> {
           stateless: entry.stateless,
           authStrategy: entry.auth_strategy,
           auth: entry.auth as Record<string, unknown> | undefined,
+          capabilities: entry.capabilities ?? [],
         });
       }
     }
@@ -117,6 +120,7 @@ async function upsertMcpByNamespace(
     stateless: data.stateless,
     authStrategy: data.authStrategy,
     masterAuth: data.authStrategy === "MASTER" ? data.auth as any : undefined,
+    capabilities: data.capabilities,
   };
 
   try {
@@ -234,6 +238,7 @@ function collectBundleInlineMcps(
           stateless: def.stateless,
           authStrategy: def.auth ? "MASTER" : "NONE",
           auth: def.auth as Record<string, unknown> | undefined,
+          capabilities: def.capabilities ?? [],
         });
       }
     } else if ("url" in entry && "namespace" in entry) {
@@ -243,6 +248,7 @@ function collectBundleInlineMcps(
         stateless: entry.stateless,
         authStrategy: entry.auth_strategy,
         auth: entry.auth as Record<string, unknown> | undefined,
+        capabilities: entry.capabilities ?? [],
       });
     }
   }

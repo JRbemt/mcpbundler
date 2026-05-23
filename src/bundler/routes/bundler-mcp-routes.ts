@@ -264,6 +264,14 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
             await bundler.attachUpstreamsAsync(session, bundleConfig.upstreams);
             session.emitListChanged();
             logger.debug({ sessionId, strategy }, "All upstreams attached (eager)");
+          } else if (strategy === LoadingStrategy.ROUTER) {
+            // Connect nothing upfront. The LLM router drives all upstream connections
+            // after the agent calls bundler__set_context. MCPConfig.tools and capabilities
+            // in the bundle catalog give the LLM enough signal to rank without live connections.
+            if (!bundleConfig.router) {
+              logger.warn({ sessionId }, "Loading strategy 'router' set but bundle has no router config - no upstreams will connect");
+            }
+            logger.debug({ sessionId, strategy }, "Router mode: deferring all upstream connections to LLM router");
           } else {
             // PROGRESSIVE: respond immediately; client receives list_changed
             // notifications as each upstream comes online.

@@ -54,7 +54,7 @@ export const BundlerConfigSchema = z.object({
         .optional()
         .default(ConcurrencySchema.parse({})),
 
-    loading_strategy: z.enum(["eager", "progressive"]).default("progressive"),
+    loading_strategy: z.enum(["eager", "progressive", "router"]).default("progressive"),
 
     llm_providers: z.array(LLMProviderConfigSchema).optional().default([]),
 });
@@ -86,6 +86,15 @@ export const MCPConfigSchema = z.object({
 
     /** Human-readable description of what this MCP provides. Used by the LLM router for namespace selection. */
     description: z.string().optional(),
+
+    /** Structured capability keywords for LLM routing (e.g. ["git", "code-review", "CI"]). Maps to listing tags from the backend catalog. */
+    capabilities: z.array(z.string()).optional(),
+
+    /** Tool descriptors from the latest published version. Populated by the backend at resolve time so the LLM router can select namespaces without connecting first. */
+    tools: z.array(z.object({
+        name: z.string(),
+        description: z.string().optional(),
+    })).optional(),
 
     stateless: z.boolean().default(false),
 

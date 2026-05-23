@@ -82,6 +82,7 @@ export async function addMcpCommand(namespace: string, url: string, options: Add
       version: options.mcpVersion,
       stateless: options.stateless,
       masterAuth: authConfig,
+      capabilities: [],
     };
 
     const client = new BundlerAPIClient(options.host, options.token);

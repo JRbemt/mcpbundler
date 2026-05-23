@@ -47,6 +47,10 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
     // Shared across signals - the last declared task context
     private currentContext = "";
 
+    // Tool names per namespace observed from live connections (fallback when MCPConfig.tools is absent)
+    private liveCatalog: Map<string, string[]> = new Map();
+
+
     constructor(config: LLMToolRouterConfig) {
         super();
         this.engine = new LLMRouterEngine(config.llm);
@@ -59,7 +63,24 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
         this.setContextToolName = config.setContext?.toolName ?? "bundler__set_context";
     }
 
+    private buildLiveCatalog(tools: Tool[]): Map<string, string[]> {
+        const catalog = new Map<string, string[]>();
+        for (const tool of tools) {
+            const sep = tool.name.indexOf("__");
+            if (sep > 0) {
+                const ns = tool.name.slice(0, sep);
+                const toolName = tool.name.slice(sep + 2);
+                const bucket = catalog.get(ns) ?? [];
+                bucket.push(toolName);
+                catalog.set(ns, bucket);
+            }
+        }
+        return catalog;
+    }
+
     async transformToolList(tools: Tool[], _ctx: MiddlewareContext): Promise<Tool[]> {
+        this.liveCatalog = this.buildLiveCatalog(tools);
+
         const result: Tool[] = [];
 
         if (this.setContextEnabled) {
@@ -143,7 +164,7 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
     }
 
     private triggerReRank(ctx: MiddlewareContext, context: string, maxActiveUpstreams: number): void {
-        this.engine.reRank(ctx, context, maxActiveUpstreams)
+        this.engine.reRank(ctx, context, maxActiveUpstreams, this.liveCatalog)
             .then((changed) => { if (changed) ctx.notifyToolsChanged(); })
             .catch((err: Error) => logger.error({ err: err.message }, "LLMToolRouter reRank error"));
     }

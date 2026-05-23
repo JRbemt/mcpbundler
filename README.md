@@ -150,21 +150,24 @@ mcpbundler token my-sub --config mcpbundler.yaml --token %MGMT_TOKEN%
 definitions:
   llm_bindings:
     - provider: claude
-      api_key: "${ANTHROPIC_API_KEY}"   # bound once per user; reused across subscriptions
+      api_key: "${ANTHROPIC_API_KEY}" 
 
   mcps:
     - namespace: github
       url: "https://github-mcp.example.com/mcp"
+      capabilities: ["git", "pull-requests", "code-review"]  
       auth:
         method: bearer
-        token: "${GITHUB_TOKEN}"         # MASTER auth: all subscribers share this token
+        token: "${GITHUB_TOKEN}"         
 
     - namespace: jira
       url: "https://jira-mcp.example.com/mcp"
-                                         # no auth block = USER_SET: each subscriber provides their own key
+      capabilities: ["issue-tracking", "project-management"]
+                                    
 
 bundles:
   - name: dev-tools
+    loading_strategy: router             # Smart Tool Selection
     mcps:
       - ref: github
         auth_strategy: MASTER
@@ -281,6 +284,18 @@ A bundle groups a subset of MCPs behind a single access token. Bundles can restr
 | `DELETE` | `/api/bundles/:id` | User | Delete bundle (owner or ancestor) |
 | `DELETE` | `/api/bundles/:id/:namespace` | User | Remove MCP from bundle |
 
+**Loading strategies**
+
+`loading_strategy` controls when upstream MCP connections are established for a session.
+
+| Strategy | Behavior |
+|----------|----------|
+| `progressive` (default) | All upstreams connect asynchronously in the background. The client receives incremental `list_changed` notifications as each upstream comes online. |
+| `eager` | All upstreams connect before the session handshake completes. The client receives the full tool list on the first `tools/list` call; no `list_changed` notifications are sent during loadings. |
+| `router` | No upstreams connect at session start. The LLM router drives all connections after the agent calls `bundler__set_context`. Only the namespaces the LLM selects are connected, and the client receives `list_changed` notifications as each one comes online. Requires a `router` config on the subscription. If no router config is present, a warning is logged and no upstreams will connect. |
+
+`router` mode is the most efficient option when bundles contain many MCPs but most tasks only need a subset. Connection and context cost scales with what the agent actually needs, not with the total bundle size. The LLM can make accurate selections before any connection is open because it uses `capabilities` and `tools` from the registry.
+
 **Bundle Token endpoints:**
 
 | Method | Endpoint | Auth | Description |
@@ -345,6 +360,24 @@ Registry-managed LLM providers (claude, chatgpt, gemini) are pre-seeded by the s
 API keys are stored encrypted per user. When a bundle is resolved, the server looks up the binding for the token owner and injects the decrypted key into the resolved bundle's router config. The bundler then creates a per-session LLM client from that key - keys are never shared across sessions or users.
 
 For self-hosted models (Ollama, local OpenAI-compatible endpoints), define them under `definitions.llms` in the YAML config. These are registered directly on startup and do not require an API key binding.
+
+**Improving routing quality with capabilities and tools**
+
+The LLM router builds a selection prompt that lists every MCP in the bundle. Richer metadata per MCP leads to more accurate namespace selection, especially before any upstream connection has been established.
+
+Two fields contribute to this metadata:
+
+- `capabilities` - a list of short keyword strings describing what the MCP does (e.g. `["git", "pull-requests", "code-review"]`). Set these when registering an MCP via the API or YAML config. They appear in the selection prompt alongside the namespace name.
+- `tools` - the actual tool names exposed by the MCP (e.g. `create_issue`, `list_prs`). When an MCP is registered through the marketplace backend, tool names are populated automatically from the published MCP version. In self-hosted YAML mode the bundler can also fall back to the live tool list of any already-connected upstream.
+
+The selection prompt the router sees for each MCP looks like:
+
+```
+- github (GitHub MCP for repository management)
+  [capabilities: git, pull-requests, code-review] [tools: create_issue, list_prs, merge_pr, ...]
+```
+
+Both fields are optional. When neither is present the router falls back to namespace name and description only. If the LLM cannot determine relevant namespaces it falls back to all-pass, so routing never silently deactivates tools.
 
 </details>
 

@@ -33,14 +33,19 @@ export class LLMRouterEngine {
      * returns true when the visible namespace set changed (so callers can
      * decide whether to fire a list_changed notification).
      */
-    async reRank(ctx: MiddlewareContext, context: string, maxActiveUpstreams: number): Promise<boolean> {
+    async reRank(
+        ctx: MiddlewareContext,
+        context: string,
+        maxActiveUpstreams: number,
+        liveCatalog?: Map<string, string[]>,
+    ): Promise<boolean> {
         if (!context) return false;
 
         const available = ctx.getAvailableUpstreams();
 
         let selected: string[];
         try {
-            selected = await this.llm.selectNamespaces(context, available, maxActiveUpstreams);
+            selected = await this.llm.selectNamespaces(context, available, maxActiveUpstreams, liveCatalog);
         } catch (err) {
             // LLM call failed (network error, 4xx/5xx). Attach all available upstreams so
             // progressive-mode sessions can still discover tools, but keep isInitialized=false

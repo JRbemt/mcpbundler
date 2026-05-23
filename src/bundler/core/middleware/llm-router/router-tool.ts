@@ -12,6 +12,8 @@ export interface LLMRouterTool {
         context: string,
         availableUpstreams: MCPConfig[],
         maxUpstreams: number,
+        /** Tool names per namespace from live connections, used when MCPConfig.tools is not populated. */
+        liveCatalog?: Map<string, string[]>,
     ): Promise<string[]>;
 }
 
@@ -25,6 +27,7 @@ export class AllPassToolRouterLLM implements LLMRouterTool {
         _context: string,
         availableUpstreams: MCPConfig[],
         maxUpstreams: number,
+        _liveCatalog?: Map<string, string[]>,
     ): Promise<string[]> {
         return availableUpstreams.slice(0, maxUpstreams).map((u) => u.namespace);
     }

@@ -24,6 +24,7 @@ export const CreateMcpRequestSchema = z.object({
   stateless: z.boolean().default(false),
   authStrategy: z.enum(AuthStrategy).default("NONE"),
   masterAuth: MCPAuthConfigSchema.optional(),
+  capabilities: z.array(z.string()).optional().default([]),
 });
 
 export const UpdateMcpRequestSchema = CreateMcpRequestSchema.partial().omit({ namespace: true });
@@ -35,6 +36,8 @@ export const MCPResponseSchema = CreateMcpRequestSchema.extend({
   id: z.string(),
   createdAt: z.date(),
   updatedAt: z.date(),
+  // Optional until prisma generate reflects the migrated schema
+  capabilities: z.array(z.string()).optional(),
   createdBy: z
     .object({
       id: z.string(),

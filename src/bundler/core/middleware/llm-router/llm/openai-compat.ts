@@ -49,7 +49,6 @@ export class OpenAICompatClient implements LLMClient {
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userMessage },
             ],
-            response_format: { type: "json_object" },
             temperature: this.temperature,
             max_tokens: this.maxTokens,
             stream: false,

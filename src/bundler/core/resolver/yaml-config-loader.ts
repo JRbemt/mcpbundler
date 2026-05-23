@@ -56,6 +56,7 @@ const YamlRefMcpInlineSchema = z.object({
     stateless: z.boolean().default(false),
     auth: MCPAuthConfigSchema.optional(),
     description: z.string().optional(),
+    capabilities: z.array(z.string()).optional().default([]),
 });
 
 const YamlRefMcpSchema = z.union([YamlRefMcpExternalSchema, YamlRefMcpInlineSchema]);
@@ -98,6 +99,7 @@ const YamlBundleMcpInlineSchema = z.object({
     auth_strategy: AuthStrategyLiteralSchema,
     auth: MCPAuthConfigSchema.optional(),
     description: z.string().optional(),
+    capabilities: z.array(z.string()).optional().default([]),
 });
 
 const YamlBundleMcpEntrySchema = z.union([

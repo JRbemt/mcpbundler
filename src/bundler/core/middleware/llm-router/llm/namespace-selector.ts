@@ -3,25 +3,59 @@ import { MCPConfig } from "../../../schemas.js";
 import { LLMClient } from "./llm-client.js";
 import { LLMRouterTool } from "../router-tool.js";
 
-const SYSTEM_PROMPT_TEMPLATE = `You are a tool routing assistant for an MCP (Model Context Protocol) bundler.
-Your job is to select which MCP server namespaces are relevant to the user's current task.
+const SYSTEM_PROMPT_TEMPLATE = `You are a namespace routing assistant for an MCP (Model Context Protocol) bundler.
+Your job is to select which MCP server namespaces contain tools needed for the given context.
+
+Think about what operations the context requires, then match those to the servers listed below.
 
 Available MCP servers:
 {servers}
 
 Instructions:
 - Select at most {max} namespaces
-- Only include namespaces clearly relevant to the task
+- Only include namespaces with tools clearly relevant to the task or recent call pattern
 - Use only namespace names from the list above
-- Return ONLY a valid JSON object in this exact shape: {"namespaces": ["ns1", "ns2"]}
-- If nothing is relevant, return {"namespaces": []}`;
+- Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation
+- Format: {"namespaces": ["ns1", "ns2"]}
+- If nothing is relevant: {"namespaces": []}`;
 
-function buildSystemPrompt(available: MCPConfig[], max: number): string {
+const MAX_TOOLS_IN_PROMPT = 10;
+
+function buildServerLine(u: MCPConfig, liveCatalog?: Map<string, string[]>): string {
+    const parts: string[] = [`- ${u.namespace}`];
+
+    if (u.description) {
+        parts[0] += ` (${u.description})`;
+    }
+
+    const extras: string[] = [];
+
+    if (u.capabilities?.length) {
+        extras.push(`capabilities: ${u.capabilities.join(", ")}`);
+    }
+
+    // Prefer static tool list from config; fall back to names from live connection.
+    const toolNames: string[] = u.tools?.length
+        ? u.tools.map((t) => t.name)
+        : (liveCatalog?.get(u.namespace) ?? []);
+
+    if (toolNames.length) {
+        const listed = toolNames.length > MAX_TOOLS_IN_PROMPT
+            ? toolNames.slice(0, MAX_TOOLS_IN_PROMPT).join(", ") + ", ..."
+            : toolNames.join(", ");
+        extras.push(`tools: ${listed}`);
+    }
+
+    if (extras.length) {
+        parts.push(`  [${extras.join("] [")}]`);
+    }
+
+    return parts.join("\n");
+}
+
+function buildSystemPrompt(available: MCPConfig[], max: number, liveCatalog?: Map<string, string[]>): string {
     const serverList = available
-        .map((u) => {
-            const desc = u.description ? `: ${u.description}` : "";
-            return `- ${u.namespace}${desc}`;
-        })
+        .map((u) => buildServerLine(u, liveCatalog))
         .join("\n");
 
     return SYSTEM_PROMPT_TEMPLATE
@@ -59,6 +93,14 @@ function parseNamespaces(raw: string, available: MCPConfig[]): string[] {
         if (fromMatch !== null) return fromMatch;
     }
 
+    // Final fallback: extract the namespaces array directly — handles truncated responses
+    // where the array is complete but the outer object or closing fence is missing.
+    const arrayMatch = raw.match(/"namespaces"\s*:\s*(\[[^\]]*\])/);
+    if (arrayMatch) {
+        const fromArray = tryParse(`{"namespaces":${arrayMatch[1]}}`);
+        if (fromArray !== null) return fromArray;
+    }
+
     logger.warn({ raw: raw.slice(0, 200) }, "LLM namespace selector: could not parse response");
     return [];
 }
@@ -78,12 +120,12 @@ export class LLMNamespaceSelector implements LLMRouterTool {
         context: string,
         availableUpstreams: MCPConfig[],
         maxUpstreams: number,
+        liveCatalog?: Map<string, string[]>,
     ): Promise<string[]> {
         if (availableUpstreams.length === 0) return [];
 
-        const systemPrompt = buildSystemPrompt(availableUpstreams, maxUpstreams);
+        const systemPrompt = buildSystemPrompt(availableUpstreams, maxUpstreams, liveCatalog);
 
-        // Throws on network / HTTP error — caller decides how to handle.
         const raw = await this.client.complete(systemPrompt, context);
         const selected = parseNamespaces(raw, availableUpstreams);
 

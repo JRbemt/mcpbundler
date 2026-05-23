@@ -48,6 +48,7 @@ model Mcp {
   stateless    Boolean      @default(false)
   authStrategy AuthStrategy @default(NONE) @map("auth_strategy")
   masterAuth   String?      @map("master_auth_config") // Encrypted JSON - shared credentials for MASTER strategy
+  capabilities String[]     @default([]) @map("capabilities")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
   createdById  String?      @map("created_by_id")

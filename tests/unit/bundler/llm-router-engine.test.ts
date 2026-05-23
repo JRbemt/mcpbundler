@@ -93,6 +93,47 @@ describe("LLMRouterEngine", () => {
         });
     });
 
+    describe("reRank - error handling", () => {
+        it("returns false and does not mark engine ready when LLM throws", async () => {
+            const llm: LLMRouterTool = { selectNamespaces: vi.fn().mockRejectedValue(new Error("LLM unavailable")) };
+            const engine = new LLMRouterEngine(llm);
+            const ctx = makeCtx([], ["github", "stripe"]);
+
+            const result = await engine.reRank(ctx, "task", 5);
+
+            expect(result).toBe(false);
+            expect(engine.isReady()).toBe(false);
+        });
+
+        it("attaches all available upstreams as fallback when LLM throws", async () => {
+            const llm: LLMRouterTool = { selectNamespaces: vi.fn().mockRejectedValue(new Error("timeout")) };
+            const engine = new LLMRouterEngine(llm);
+            const attachUpstream = vi.fn().mockResolvedValue(undefined);
+            const ctx = {
+                ...makeCtx([], ["github", "stripe"]),
+                attachUpstream,
+            };
+
+            await engine.reRank(ctx, "task", 5);
+
+            expect(attachUpstream).toHaveBeenCalledTimes(2);
+        });
+
+        it("respects maxActiveUpstreams in fallback attachment", async () => {
+            const llm: LLMRouterTool = { selectNamespaces: vi.fn().mockRejectedValue(new Error("err")) };
+            const engine = new LLMRouterEngine(llm);
+            const attachUpstream = vi.fn().mockResolvedValue(undefined);
+            const ctx = {
+                ...makeCtx([], ["github", "stripe", "jira", "notion"]),
+                attachUpstream,
+            };
+
+            await engine.reRank(ctx, "task", 2);
+
+            expect(attachUpstream).toHaveBeenCalledTimes(2);
+        });
+    });
+
     describe("reRank - changed detection", () => {
         it("returns true on first successful rank (empty → non-empty)", async () => {
             const engine = new LLMRouterEngine(new AllPassToolRouterLLM());

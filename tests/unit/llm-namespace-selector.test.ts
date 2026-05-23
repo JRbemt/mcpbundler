@@ -72,13 +72,6 @@ describe("LLMNamespaceSelector", () => {
       expect(result).toHaveLength(4);
     });
 
-    it("falls back to all-pass when LLM client throws", async () => {
-      const client = makeClient(new Error("connection refused"));
-      const selector = new LLMNamespaceSelector(client);
-      const result = await selector.selectNamespaces("something", UPSTREAMS, 4);
-      expect(result).toHaveLength(4);
-    });
-
     it("respects maxUpstreams in all-pass fallback", async () => {
       const client = makeClient(`{"namespaces": []}`);
       const selector = new LLMNamespaceSelector(client);
@@ -105,6 +98,13 @@ describe("LLMNamespaceSelector", () => {
       const selector = new LLMNamespaceSelector(client);
       const result = await selector.selectNamespaces("task", UPSTREAMS, 4);
       expect(result).toHaveLength(4);
+    });
+
+    it("extracts namespaces array from truncated response missing closing brace", async () => {
+      const client = makeClient("```json\n{\n  \"namespaces\": [\"github\", \"jira\"]");
+      const selector = new LLMNamespaceSelector(client);
+      const result = await selector.selectNamespaces("task", UPSTREAMS, 4);
+      expect(result).toEqual(["github", "jira"]);
     });
   });
 
@@ -133,19 +133,85 @@ describe("LLMNamespaceSelector", () => {
     });
   });
 
-  describe("LLM throws a non-Error value", () => {
-    it("falls back to all-pass when client rejects with a plain string", async () => {
-      const client: LLMClient = { complete: vi.fn().mockRejectedValue("service unavailable") };
+  describe("error propagation", () => {
+    it("propagates Error thrown by the LLM client", async () => {
+      const client = makeClient(new Error("connection refused"));
       const selector = new LLMNamespaceSelector(client);
-      const result = await selector.selectNamespaces("task", UPSTREAMS, 4);
-      expect(result).toHaveLength(4);
+      await expect(selector.selectNamespaces("task", UPSTREAMS, 4)).rejects.toThrow("connection refused");
     });
 
-    it("falls back to all-pass when client rejects with a plain object", async () => {
-      const client: LLMClient = { complete: vi.fn().mockRejectedValue({ code: 503 }) };
+    it("propagates non-Error rejection from the LLM client", async () => {
+      const client: LLMClient = { complete: vi.fn().mockRejectedValue("service unavailable") };
       const selector = new LLMNamespaceSelector(client);
-      const result = await selector.selectNamespaces("task", UPSTREAMS, 2);
-      expect(result).toHaveLength(2);
+      await expect(selector.selectNamespaces("task", UPSTREAMS, 4)).rejects.toBe("service unavailable");
+    });
+  });
+
+  describe("prompt enrichment", () => {
+    it("includes capabilities in the system prompt", async () => {
+      const upstreams: MCPConfig[] = [{
+        namespace: "github",
+        url: "https://github.example.com/mcp",
+        stateless: false,
+        authStrategy: "NONE" as const,
+        capabilities: ["git", "code-review"],
+      }];
+      const client = makeClient(`{"namespaces": ["github"]}`);
+      const selector = new LLMNamespaceSelector(client);
+      await selector.selectNamespaces("task", upstreams, 4);
+
+      const [systemPrompt] = (client.complete as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(systemPrompt).toContain("capabilities: git, code-review");
+    });
+
+    it("includes tool names from MCPConfig.tools in the system prompt", async () => {
+      const upstreams: MCPConfig[] = [{
+        namespace: "github",
+        url: "https://github.example.com/mcp",
+        stateless: false,
+        authStrategy: "NONE" as const,
+        tools: [{ name: "create_issue" }, { name: "list_prs" }],
+      }];
+      const client = makeClient(`{"namespaces": ["github"]}`);
+      const selector = new LLMNamespaceSelector(client);
+      await selector.selectNamespaces("task", upstreams, 4);
+
+      const [systemPrompt] = (client.complete as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(systemPrompt).toContain("tools: create_issue, list_prs");
+    });
+
+    it("falls back to liveCatalog tool names when MCPConfig.tools is absent", async () => {
+      const upstreams: MCPConfig[] = [{
+        namespace: "github",
+        url: "https://github.example.com/mcp",
+        stateless: false,
+        authStrategy: "NONE" as const,
+      }];
+      const liveCatalog = new Map([["github", ["create_issue", "search_code"]]]);
+      const client = makeClient(`{"namespaces": ["github"]}`);
+      const selector = new LLMNamespaceSelector(client);
+      await selector.selectNamespaces("task", upstreams, 4, liveCatalog);
+
+      const [systemPrompt] = (client.complete as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(systemPrompt).toContain("tools: create_issue, search_code");
+    });
+
+    it("prefers MCPConfig.tools over liveCatalog when both are present", async () => {
+      const upstreams: MCPConfig[] = [{
+        namespace: "github",
+        url: "https://github.example.com/mcp",
+        stateless: false,
+        authStrategy: "NONE" as const,
+        tools: [{ name: "from_config" }],
+      }];
+      const liveCatalog = new Map([["github", ["from_live"]]]);
+      const client = makeClient(`{"namespaces": ["github"]}`);
+      const selector = new LLMNamespaceSelector(client);
+      await selector.selectNamespaces("task", upstreams, 4, liveCatalog);
+
+      const [systemPrompt] = (client.complete as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(systemPrompt).toContain("from_config");
+      expect(systemPrompt).not.toContain("from_live");
     });
   });
 });

@@ -39,6 +39,14 @@ describe("BundlerConfigSchema", () => {
     expect(config.concurrency.idle_timeout_ms).toBe(5 * 60 * 1000);
   });
 
+  it("should accept all loading strategies including router", () => {
+    const base = { name: "t", version: "1", host: "localhost", port: 3000 };
+    for (const strategy of ["eager", "progressive", "router"]) {
+      const config = BundlerConfigSchema.parse({ ...base, loading_strategy: strategy });
+      expect(config.loading_strategy).toBe(strategy);
+    }
+  });
+
   it("should reject missing required fields", () => {
     expect(() => BundlerConfigSchema.parse({})).toThrow();
     expect(() => BundlerConfigSchema.parse({ name: "test" })).toThrow();
