@@ -103,7 +103,7 @@ export class Session extends EventEmitter {
     // Configurable upstream request timeout (default 30 seconds)
     private readonly upstreamTimeoutMs: number = 30000;
 
-    private loadingStrategy: LoadingStrategy = LoadingStrategy.PROGRESSIVE;
+    private loadingStrategy: LoadingStrategy = LoadingStrategy.EAGER;
     private availableUpstreams: MCPConfig[] = [];
     private readonly middlewareChain: MiddlewareChain = new MiddlewareChain();
 
@@ -210,6 +210,7 @@ export class Session extends EventEmitter {
         return {
             get sessionId() { return session.id; },
             get bundleId() { return session.bundleId; },
+            get loadingStrategy() { return session.loadingStrategy; },
 
             notifyToolsChanged: () => session.emit(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, {}),
             notifyResourcesChanged: () => session.emit(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, {}),
@@ -309,8 +310,7 @@ export class Session extends EventEmitter {
 
         // In PROGRESSIVE and ROUTER modes notify the client that the tool list has grown —
         // but only if the upstream actually connected (a failed upstream adds no tools).
-        if ((this.loadingStrategy === LoadingStrategy.PROGRESSIVE ||
-             this.loadingStrategy === LoadingStrategy.ROUTER) && connector.isConnected()) {
+        if (this.loadingStrategy === LoadingStrategy.PROGRESSIVE && connector.isConnected()) {
             this.emitListChanged();
         }
 

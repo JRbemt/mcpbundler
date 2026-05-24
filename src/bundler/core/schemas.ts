@@ -54,7 +54,7 @@ export const BundlerConfigSchema = z.object({
         .optional()
         .default(ConcurrencySchema.parse({})),
 
-    loading_strategy: z.enum(["eager", "progressive", "router"]).default("progressive"),
+    loading_strategy: z.enum(["eager", "progressive"]).default("eager"),
 
     llm_providers: z.array(LLMProviderConfigSchema).optional().default([]),
 });

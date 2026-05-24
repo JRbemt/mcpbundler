@@ -167,7 +167,7 @@ definitions:
 
 bundles:
   - name: dev-tools
-    loading_strategy: router             # Smart Tool Selection
+    loading_strategy: eager
     mcps:
       - ref: github
         auth_strategy: MASTER
@@ -286,15 +286,20 @@ A bundle groups a subset of MCPs behind a single access token. Bundles can restr
 
 **Loading strategies**
 
-`loading_strategy` controls when upstream MCP connections are established for a session.
+`loading_strategy` controls how upstream MCP connections are established once the set of namespaces to load has been determined.
 
 | Strategy | Behavior |
 |----------|----------|
-| `progressive` (default) | All upstreams connect asynchronously in the background. The client receives incremental `list_changed` notifications as each upstream comes online. |
-| `eager` | All upstreams connect before the session handshake completes. The client receives the full tool list on the first `tools/list` call; no `list_changed` notifications are sent during loadings. |
-| `router` | No upstreams connect at session start. The LLM router drives all connections after the agent calls `bundler__set_context`. Only the namespaces the LLM selects are connected, and the client receives `list_changed` notifications as each one comes online. Requires a `router` config on the subscription. If no router config is present, a warning is logged and no upstreams will connect. |
+| `eager` (default) | All upstreams connect in parallel before the session handshake completes (or before `bundler__set_context` returns). The agent receives the full tool list on its first `tools/list` call with no follow-up `list_changed` notifications. |
+| `progressive` | Upstreams connect in parallel in the background. The agent receives incremental `list_changed` notifications as each upstream comes online, and can start working with the first available tools immediately. |
 
-`router` mode is the most efficient option when bundles contain many MCPs but most tasks only need a subset. Connection and context cost scales with what the agent actually needs, not with the total bundle size. The LLM can make accurate selections before any connection is open because it uses `capabilities` and `tools` from the registry.
+**Smart tool selection with `set_context`**
+
+When `set_context` is enabled on the subscription's router config, the LLM selects which namespaces to load before any upstream connects. The agent's first (and only) visible tool is `bundler__set_context`. Calling it with a one-sentence task description triggers an LLM ranking pass over the full bundle catalog - using static `capabilities` and `tools` metadata from the registry - and connects only the relevant namespaces. The loading strategy then controls how those selected upstreams come online.
+
+With `eager` (the default), `bundler__set_context` blocks until all selected upstreams are connected and returns "Tools are ready." The agent can call tools immediately after. With `progressive`, the response returns at once and upstreams appear via `list_changed` notifications.
+
+This is the recommended configuration for large bundles where most tasks only need a subset of the available MCPs. Connection cost and agent context window usage scale with what the agent actually needs, not with total bundle size.
 
 **Bundle Token endpoints:**
 

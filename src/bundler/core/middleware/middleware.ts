@@ -6,6 +6,7 @@ import {
     Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { MCPConfig } from "../schemas.js";
+import { LoadingStrategy } from "../session/loading/loading-strategy.js";
 
 /**
  * Session control plane exposed to middleware.
@@ -23,6 +24,7 @@ import { MCPConfig } from "../schemas.js";
 export interface MiddlewareContext {
     readonly sessionId: string;
     readonly bundleId: string;
+    readonly loadingStrategy: LoadingStrategy;
 
     notifyToolsChanged(): void;
     notifyResourcesChanged(): void;

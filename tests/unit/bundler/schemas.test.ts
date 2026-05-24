@@ -41,7 +41,7 @@ describe("BundlerConfigSchema", () => {
 
   it("should accept all loading strategies including router", () => {
     const base = { name: "t", version: "1", host: "localhost", port: 3000 };
-    for (const strategy of ["eager", "progressive", "router"]) {
+    for (const strategy of ["eager", "progressive"]) {
       const config = BundlerConfigSchema.parse({ ...base, loading_strategy: strategy });
       expect(config.loading_strategy).toBe(strategy);
     }

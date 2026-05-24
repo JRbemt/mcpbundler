@@ -2,6 +2,7 @@ import { Tool, CallToolRequest, CallToolResult } from "@modelcontextprotocol/sdk
 import { AbstractBundlerMiddleware, MiddlewareContext } from "../middleware.js";
 import { LLMRouterTool } from "./router-tool.js";
 import { LLMRouterEngine } from "./router-engine.js";
+import { LoadingStrategy } from "../../session/loading/loading-strategy.js";
 import logger from "../../../../shared/utils/logger.js";
 
 export interface LLMToolRouterConfig {
@@ -129,8 +130,18 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
             this.currentContext = task;
         }
 
-        this.triggerReRank(ctx, this.currentContext, this.setContextMaxActiveUpstreams);
+        if (ctx.loadingStrategy === LoadingStrategy.EAGER) {
+            // Block until all selected upstreams are connected so tools are immediately
+            // available when the agent processes this response.
+            await this.triggerReRank(ctx, this.currentContext, this.setContextMaxActiveUpstreams);
+            return {
+                content: [{ type: "text", text: "Context updated. Tools are ready." }],
+            };
+        }
 
+        // PROGRESSIVE: fire-and-forget; client receives list_changed notifications
+        // as each selected upstream comes online.
+        void this.triggerReRank(ctx, this.currentContext, this.setContextMaxActiveUpstreams);
         return {
             content: [{ type: "text", text: "Context updated. Activating relevant tools..." }],
         };
@@ -163,10 +174,13 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
         }
     }
 
-    private triggerReRank(ctx: MiddlewareContext, context: string, maxActiveUpstreams: number): void {
-        this.engine.reRank(ctx, context, maxActiveUpstreams, this.liveCatalog)
-            .then((changed) => { if (changed) ctx.notifyToolsChanged(); })
-            .catch((err: Error) => logger.error({ err: err.message }, "LLMToolRouter reRank error"));
+    private async triggerReRank(ctx: MiddlewareContext, context: string, maxActiveUpstreams: number): Promise<void> {
+        try {
+            const changed = await this.engine.reRank(ctx, context, maxActiveUpstreams, this.liveCatalog);
+            if (changed) ctx.notifyToolsChanged();
+        } catch (err) {
+            logger.error({ err: err instanceof Error ? err.message : String(err) }, "LLMToolRouter reRank error");
+        }
     }
 
     private extractNamespace(tool: Tool): string | null {

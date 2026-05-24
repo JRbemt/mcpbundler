@@ -258,20 +258,19 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
           // Store session before attaching upstreams so MCP handlers can reach it
           bundler.addSession(sessionId, session);
 
-          if (strategy === LoadingStrategy.EAGER) {
+          const setContextEnabled = bundleConfig.router?.set_context?.enabled ?? false;
+
+          if (setContextEnabled) {
+            // set_context is enabled: the LLM ranks namespaces before any upstream connects.
+            // Nothing loads here — the router middleware drives attachment after the agent
+            // calls bundler__set_context with a task description.
+            logger.debug({ sessionId, strategy }, "set_context enabled: upstream selection deferred to LLM router");
+          } else if (strategy === LoadingStrategy.EAGER) {
             // Block until all upstreams are connected, then emit once so the client
             // receives a complete tool list on its very first tools/list request.
             await bundler.attachUpstreamsAsync(session, bundleConfig.upstreams);
             session.emitListChanged();
             logger.debug({ sessionId, strategy }, "All upstreams attached (eager)");
-          } else if (strategy === LoadingStrategy.ROUTER) {
-            // Connect nothing upfront. The LLM router drives all upstream connections
-            // after the agent calls bundler__set_context. MCPConfig.tools and capabilities
-            // in the bundle catalog give the LLM enough signal to rank without live connections.
-            if (!bundleConfig.router) {
-              logger.warn({ sessionId }, "Loading strategy 'router' set but bundle has no router config - no upstreams will connect");
-            }
-            logger.debug({ sessionId, strategy }, "Router mode: deferring all upstream connections to LLM router");
           } else {
             // PROGRESSIVE: respond immediately; client receives list_changed
             // notifications as each upstream comes online.
@@ -429,8 +428,8 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
     }
 
     const { strategy } = req.body ?? {};
-    if (strategy !== "eager" && strategy !== "progressive") {
-      res.status(400).json({ error: "strategy must be \"eager\" or \"progressive\"" });
+    if (strategy !== LoadingStrategy.EAGER && strategy !== LoadingStrategy.PROGRESSIVE) {
+      res.status(400).json({ error: `strategy must be "${LoadingStrategy.EAGER}" or "${LoadingStrategy.PROGRESSIVE}"` });
       return;
     }
 
