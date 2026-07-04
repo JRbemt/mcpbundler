@@ -75,7 +75,7 @@ export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConn
     }
 
     try {
-      const authOptions = buildAuthOptions(this.config.auth);
+      const authOptions = buildAuthOptions(this.config.auth, this.config.config_overrides);
       const url = new URL(this.config.url);
 
       this.transport = new StreamableHTTPClientTransport(url, {

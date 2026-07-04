@@ -105,7 +105,10 @@ export const MCPConfigSchema = z.object({
     auth: MCPAuthConfigSchema.optional(),
 
     /** Per-MCP permissions */
-    permissions: McpPermissionsSchema.optional()
+    permissions: McpPermissionsSchema.optional(),
+
+    /** Runtime configuration passed as X-Mcp-Config-{KEY} headers to the upstream MCP. */
+    config_overrides: z.record(z.string(), z.string()).optional(),
 });
 
 export type MCPConfig = z.infer<typeof MCPConfigSchema>;

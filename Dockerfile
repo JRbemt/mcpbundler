@@ -9,16 +9,10 @@ RUN apk add --no-cache openssl
 COPY package*.json ./
 RUN npm ci && npm cache clean --force
 
-# Copy Prisma schema and config, then generate client
-COPY prisma ./prisma/
-COPY prisma.config.ts ./
-RUN npx prisma generate
-
 # Copy source files and build
 COPY tsconfig.json ./
 COPY src ./src
 
-# Note: Build script also copies prisma files to dist/
 RUN npm run build
 
 # ---- Stage 2: Production Runtime ----
@@ -36,8 +30,6 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
-COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
-COPY --from=builder --chown=nodejs:nodejs /app/prisma.config.ts ./
 
 COPY --chown=nodejs:nodejs ./scripts ./scripts
 RUN chmod +x ./scripts/docker-entrypoint.sh

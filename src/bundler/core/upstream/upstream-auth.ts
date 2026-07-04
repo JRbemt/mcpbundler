@@ -66,49 +66,51 @@ export class UpstreamOAuthProvider implements OAuthClientProvider {
   }
 }
 
-export function buildAuthOptions(config?: MCPAuthConfig): StreamableHTTPClientTransportOptions {
-  if (!config || config.method === "none") {
-    return {};
+export function buildAuthOptions(
+  config?: MCPAuthConfig,
+  configOverrides?: Record<string, string>
+): StreamableHTTPClientTransportOptions {
+  const configHeaders: Record<string, string> = {};
+  if (configOverrides) {
+    for (const [key, value] of Object.entries(configOverrides)) {
+      configHeaders[`X-Mcp-Config-${key}`] = value;
+    }
   }
+
+  if (!config || config.method === "none") {
+    return Object.keys(configHeaders).length > 0
+      ? { requestInit: { headers: configHeaders } }
+      : {};
+  }
+
+  let authHeaders: Record<string, string> = {};
 
   switch (config.method) {
     case "bearer":
-      return {
-        requestInit: {
-          headers: {
-            "Authorization": `Bearer ${config.token}`
-          }
-        }
-      };
+      authHeaders = { "Authorization": `Bearer ${config.token}` };
+      break;
 
     case "basic": {
       const credentials = Buffer.from(`${config.username}:${config.password}`).toString("base64");
-      return {
-        requestInit: {
-          headers: {
-            "Authorization": `Basic ${credentials}`
-          }
-        }
-      };
+      authHeaders = { "Authorization": `Basic ${credentials}` };
+      break;
     }
 
     case "api_key":
-      return {
-        requestInit: {
-          headers: {
-            [config.header]: config.key
-          }
-        }
-      };
+      authHeaders = { [config.header]: config.key };
+      break;
 
     case "headers":
-      return {
-        requestInit: {
-          headers: config.headers
-        }
-      };
+      authHeaders = config.headers;
+      break;
 
     default:
-      return {};
+      break;
   }
+
+  return {
+    requestInit: {
+      headers: { ...authHeaders, ...configHeaders },
+    },
+  };
 }

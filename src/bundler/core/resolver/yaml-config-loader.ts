@@ -130,6 +130,7 @@ const YamlSubscribeCredentialSchema = z.object({
 
 const YamlSubscribeSchema = z.object({
     name: z.string().min(1),
+    tokens: z.record(z.string().min(1), z.string().min(1)),
     bundle: z.string().min(1),
     credentials: z.record(z.string(), YamlSubscribeCredentialSchema).optional(),
     router: BundleRouterConfigSchema,

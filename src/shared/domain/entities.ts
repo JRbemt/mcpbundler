@@ -1,17 +1,4 @@
-import { Prisma } from "@prisma/client";
 import z from "zod";
-
-export { Prisma } from "@prisma/client";
-export { PrismaClient, BundleAccessToken, GlobalSettings, MCPBundleEntry, Mcp, Bundle, ApiUser, PermissionType, AuthStrategy, Subscription, LlmProvider, UserLlmCredential } from "@prisma/client";
-export { PrismaClientKnownRequestError } from "@prisma/client/runtime/client";
-
-export type CreatedBundle = Prisma.BundleGetPayload<{
-    include: { createdBy: { select: { id: true, name: true } } };
-}>;
-
-export type CreatedApiUser = Prisma.ApiUserGetPayload<{
-    include: { createdBy: { select: { name: true, id: true } } };
-}>;
 
 /**
  * Upstream authentication configuration schema
