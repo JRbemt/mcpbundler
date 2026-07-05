@@ -116,7 +116,7 @@ export class YamlBundleResolver implements ResolverService {
             upstreams.push({
                 namespace: resolved.namespace,
                 url: resolved.url,
-                stateless: resolved.stateless,
+                pooled: resolved.stateless,
                 authStrategy: resolved.authStrategy,
                 auth,
                 description: resolved.description,

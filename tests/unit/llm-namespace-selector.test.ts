@@ -8,7 +8,7 @@ function makeUpstreams(namespaces: string[]): MCPConfig[] {
     namespace: ns,
     url: `https://${ns}.example.com/mcp`,
     description: `${ns} service`,
-    stateless: false,
+    pooled: false,
     authStrategy: "NONE" as const,
     auth: undefined,
     permissions: { allowedTools: ["*"], allowedResources: ["*"], allowedPrompts: ["*"] },
@@ -122,7 +122,7 @@ describe("LLMNamespaceSelector", () => {
 
     it("omits description for MCPs that have none", async () => {
       const upstreams: MCPConfig[] = [
-        { namespace: "bare-ns", url: "https://bare.example.com/mcp", stateless: false, authStrategy: "NONE" as const },
+        { namespace: "bare-ns", url: "https://bare.example.com/mcp", pooled: false, authStrategy: "NONE" as const },
       ];
       const client = makeClient(`{"namespaces": ["bare-ns"]}`);
       const selector = new LLMNamespaceSelector(client);
@@ -152,7 +152,7 @@ describe("LLMNamespaceSelector", () => {
       const upstreams: MCPConfig[] = [{
         namespace: "github",
         url: "https://github.example.com/mcp",
-        stateless: false,
+        pooled: false,
         authStrategy: "NONE" as const,
         capabilities: ["git", "code-review"],
       }];
@@ -168,7 +168,7 @@ describe("LLMNamespaceSelector", () => {
       const upstreams: MCPConfig[] = [{
         namespace: "github",
         url: "https://github.example.com/mcp",
-        stateless: false,
+        pooled: false,
         authStrategy: "NONE" as const,
         tools: [{ name: "create_issue" }, { name: "list_prs" }],
       }];
@@ -184,7 +184,7 @@ describe("LLMNamespaceSelector", () => {
       const upstreams: MCPConfig[] = [{
         namespace: "github",
         url: "https://github.example.com/mcp",
-        stateless: false,
+        pooled: false,
         authStrategy: "NONE" as const,
       }];
       const liveCatalog = new Map([["github", ["create_issue", "search_code"]]]);
@@ -200,7 +200,7 @@ describe("LLMNamespaceSelector", () => {
       const upstreams: MCPConfig[] = [{
         namespace: "github",
         url: "https://github.example.com/mcp",
-        stateless: false,
+        pooled: false,
         authStrategy: "NONE" as const,
         tools: [{ name: "from_config" }],
       }];

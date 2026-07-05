@@ -41,6 +41,7 @@ import { AuditBundlerAction, withAudit } from "../../shared/utils/audit-log.js";
 import logger from "../../shared/utils/logger.js";
 import { UpstreamConnectorFactory } from "./upstream/upstream-connector-factory.js";
 import { UpstreamConnectionPool } from "./upstream/upstream-connector-pool.js";
+import { InMemorySessionStateStore, SessionStateStore } from "./session/session-state-store.js";
 import { LoadingStrategy } from "./session/loading/loading-strategy.js";
 import { BundlerMiddleware } from "./middleware/middleware.js";
 import { BundlerSystemToolsMiddleware } from "./middleware/builtin-tools.js";
@@ -66,6 +67,7 @@ export class BundlerServer {
   private permissionManager: PermissionManager;
   private connectorFactory: UpstreamConnectorFactory;
   private connectionPool: UpstreamConnectionPool;
+  private stateStore: SessionStateStore;
 
   // Middleware factory registry for runtime instantiation via POST /mcp/middleware
   private middlewareFactories: Map<string, (sessionId: string) => BundlerMiddleware> = new Map();
@@ -82,9 +84,10 @@ export class BundlerServer {
     this.permissionManager = new PermissionManager();
     this.connectorFactory = new UpstreamConnectorFactory();
     this.connectionPool = new UpstreamConnectionPool();
+    this.stateStore = new InMemorySessionStateStore();
 
     this.middlewareFactories.set("llm-tool-router", (_sid) =>
-      new LLMToolRouterMiddleware({ llm: getLLM("allpass") })
+      new LLMToolRouterMiddleware({ llm: getLLM("allpass"), store: this.stateStore })
     );
 
     for (const provider of config.llm_providers ?? []) {
@@ -283,7 +286,8 @@ export class BundlerServer {
       this.namespaceResolver,
       this.permissionManager,
       this.connectorFactory,
-      this.connectionPool
+      this.connectionPool,
+      this.stateStore
     );
     session.setAvailableUpstreams(availableUpstreams);
 
@@ -470,6 +474,7 @@ export class BundlerServer {
           maxActiveUpstreams: router.set_context.max_active_upstreams,
         }
         : undefined,
+      store: this.stateStore,
     }));
     logger.info({ sessionId: session.id, model: router.model, rollingEnabled, setContextEnabled }, "LLM tool router installed");
   }

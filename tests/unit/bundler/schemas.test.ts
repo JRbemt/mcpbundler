@@ -63,7 +63,7 @@ describe("MCPConfigSchema", () => {
     expect(config.namespace).toBe("github");
     expect(config.url).toBe("https://mcp.github.com");
     expect(config.authStrategy).toBe("MASTER");
-    expect(config.stateless).toBe(false);
+    expect(config.pooled).toBe(false);
   });
 
   it("should accept valid namespace characters", () => {

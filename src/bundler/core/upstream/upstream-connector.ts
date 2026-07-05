@@ -80,7 +80,7 @@ export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConn
 
       this.transport = new StreamableHTTPClientTransport(url, {
         ...authOptions,
-        sessionId: this.config.stateless ? undefined : undefined // Let SDK generate
+        sessionId: undefined // Let SDK generate
       });
 
       this.client = new Client(
@@ -130,8 +130,8 @@ export class HttpUpstreamConnector extends EventEmitter implements IUpstreamConn
       this.reconnectAttempts = 0;
       this.lastHealthCheck = new Date();
 
-      // Start health monitoring for stateful connections
-      if (!this.config.stateless) {
+      // Start health monitoring for unpooled (per-session) connections
+      if (!this.config.pooled) {
         this.startHealthMonitoring();
       }
 

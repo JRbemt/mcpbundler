@@ -96,7 +96,8 @@ export const MCPConfigSchema = z.object({
         description: z.string().optional(),
     })).optional(),
 
-    stateless: z.boolean().default(false),
+    /** Whether the upstream connector is pooled and reused across sessions (an app-level optimization, unrelated to MCP protocol-level statelessness). */
+    pooled: z.boolean().default(false),
 
     /** Auth strategy (how to resolve credentials) */
     authStrategy: AuthStrategySchema.default("MASTER"),

@@ -23,10 +23,10 @@
 import { Router, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { randomUUID } from "crypto";
 import { BundlerServer } from "../core/bundler.js";
 import { SESSION_EVENTS } from "../core/session/session.js";
 import { LoadingStrategy } from "../core/session/loading/loading-strategy.js";
+import { SessionIdentityResolver, TransportHeaderSessionIdentity } from "../core/session/session-identity.js";
 import logger from "../../shared/utils/logger.js";
 import { getPrometheusMetrics } from "../utils/metrics.js";
 import { register } from "prom-client";
@@ -51,6 +51,7 @@ interface TransportMeta {
 export function createMcpRoutes(bundler: BundlerServer): Router {
   const router = Router();
   const startupGracePeriodMs = 1000;
+  const sessionIdentity: SessionIdentityResolver = new TransportHeaderSessionIdentity();
 
   // Store transport metadata by session ID (sessions stored in bundler.getSessions())
   const transportMeta = new Map<string, TransportMeta>();
@@ -116,7 +117,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
   router.post("/mcp", mcpLimiter, async (req: Request, res: Response) => {
     const ua = req.headers["user-agent"];
     const ip = req.ip || req.socket.remoteAddress;
-    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    const sessionId = sessionIdentity.resolve(req);
     const config = bundler.getConfig();
 
     // Validate Accept header
@@ -222,7 +223,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
 
       // Create StreamableHTTP transport with session initialization callback
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
+        sessionIdGenerator: () => sessionIdentity.issue(),
         enableJsonResponse: true,
         onsessioninitialized: async (sessionId) => {
           const strategy = (bundler.getConfig().loading_strategy ?? "progressive") as LoadingStrategy;
@@ -359,7 +360,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
    * Handle GET /mcp - SSE stream for server-initiated messages
    */
   router.get("/mcp", mcpLimiter, async (req: Request, res: Response) => {
-    const sessionId = req.headers["mcp-session-id"] as string;
+    const sessionId = sessionIdentity.resolve(req) as string;
     const meta = transportMeta.get(sessionId);
 
     if (!meta) {
@@ -391,7 +392,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
    * Handle DELETE /mcp - Session termination
    */
   router.delete("/mcp", mcpLimiter, async (req: Request, res: Response) => {
-    const sessionId = req.headers["mcp-session-id"] as string;
+    const sessionId = sessionIdentity.resolve(req) as string;
     const meta = transportMeta.get(sessionId);
 
     if (!meta) {
@@ -421,7 +422,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
    * Only affects future upstream-attach calls (e.g. from middleware).
    */
   router.put("/mcp/strategy", mcpLimiter, async (req: Request, res: Response) => {
-    const sessionId = req.headers["mcp-session-id"] as string;
+    const sessionId = sessionIdentity.resolve(req) as string;
     if (!sessionId || !transportMeta.has(sessionId)) {
       res.status(404).json({ error: "Session not found" });
       return;
@@ -450,7 +451,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
    * future names will be registered by the bundler configuration.
    */
   router.post("/mcp/middleware", mcpLimiter, async (req: Request, res: Response) => {
-    const sessionId = req.headers["mcp-session-id"] as string;
+    const sessionId = sessionIdentity.resolve(req) as string;
     if (!sessionId || !transportMeta.has(sessionId)) {
       res.status(404).json({ error: "Session not found" });
       return;
@@ -493,7 +494,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
    * Remove a middleware from an active session by name.
    */
   router.delete("/mcp/middleware/:name", mcpLimiter, async (req: Request, res: Response) => {
-    const sessionId = req.headers["mcp-session-id"] as string;
+    const sessionId = sessionIdentity.resolve(req) as string;
     if (!sessionId || !transportMeta.has(sessionId)) {
       res.status(404).json({ error: "Session not found" });
       return;

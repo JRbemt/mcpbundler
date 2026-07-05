@@ -47,6 +47,7 @@ import { IConnectorFactory } from "../upstream/upstream-connector-factory.js";
 import { LoadingStrategy } from "./loading/loading-strategy.js";
 import { BundlerMiddleware, MiddlewareContext } from "../middleware/middleware.js";
 import { MiddlewareChain } from "../middleware/middleware-chain.js";
+import { SessionStateStore } from "./session-state-store.js";
 
 /**
  * Operation types for resumption token tracking
@@ -97,15 +98,13 @@ export class Session extends EventEmitter {
     private idleCheckInterval?: NodeJS.Timeout;
     private readonly idleTimeoutMs: number = 5 * 60 * 1000; // 5 minutes default
 
-    // Resumption tokens: namespace -> operation -> token
-    private resumptionTokens: Map<string, Map<ResumableOperation, string>> = new Map();
-
     // Configurable upstream request timeout (default 30 seconds)
     private readonly upstreamTimeoutMs: number = 30000;
 
     private loadingStrategy: LoadingStrategy = LoadingStrategy.EAGER;
     private availableUpstreams: MCPConfig[] = [];
     private readonly middlewareChain: MiddlewareChain = new MiddlewareChain();
+    private readonly stateStore: SessionStateStore;
 
     constructor(
         id: string,
@@ -116,7 +115,8 @@ export class Session extends EventEmitter {
         connectorFactory: IConnectorFactory | null,
         connectionPool: UpstreamConnectionPool | null,
         lastActivityAt: Date,
-        state: SessionState
+        state: SessionState,
+        stateStore: SessionStateStore
     ) {
         super();
         this.id = id;
@@ -128,6 +128,7 @@ export class Session extends EventEmitter {
         this.connectionPool = connectionPool;
         this._lastActivityAt = lastActivityAt;
         this._state = state;
+        this.stateStore = stateStore;
         this.eventCoordinator = new UpstreamEventCoordinator(id);
 
         // Wire up notification forwarding from event coordinator to session events
@@ -226,23 +227,32 @@ export class Session extends EventEmitter {
 
     /**
      * Build RequestOptions with resumption token support and timeout.
+     * Resumption tokens are plain, connection-less decision-state, so they are
+     * held in the SessionStateStore rather than a private field - see
+     * session-state-store.ts.
      */
-    private buildRequestOptions(namespace: string, operation: ResumableOperation): RequestOptions {
-        const namespaceTokens = this.resumptionTokens.get(namespace);
+    private async buildRequestOptions(namespace: string, operation: ResumableOperation): Promise<RequestOptions> {
+        const key = this.resumptionTokenKey(namespace, operation);
+        const resumptionToken = await this.stateStore.get<string>(this.id, key);
         return {
             timeout: this.upstreamTimeoutMs,
-            resumptionToken: namespaceTokens?.get(operation),
+            resumptionToken,
             onresumptiontoken: (token: string) => {
-                if (!this.resumptionTokens.has(namespace)) {
-                    this.resumptionTokens.set(namespace, new Map());
-                }
-                this.resumptionTokens.get(namespace)!.set(operation, token);
-                logger.debug({ sessionId: this.id, namespace, operation }, "Resumption token updated");
+                this.stateStore.set(this.id, key, token)
+                    .then(() => logger.debug({ sessionId: this.id, namespace, operation }, "Resumption token updated"))
+                    .catch((err) => logger.error(
+                        { sessionId: this.id, namespace, operation, err: err instanceof Error ? err.message : String(err) },
+                        "Failed to persist resumption token"
+                    ));
             },
             onprogress: (progress: Progress) => {
                 logger.debug({ sessionId: this.id, namespace, operation, progress }, "Operation progress");
             }
         };
+    }
+
+    private resumptionTokenKey(namespace: string, operation: ResumableOperation): string {
+        return `resumption:${namespace}:${operation}`;
     }
 
     static create(
@@ -251,10 +261,11 @@ export class Session extends EventEmitter {
         namespaceService: INamespaceService,
         permissionService: IPermissionService,
         connectorFactory: IConnectorFactory,
-        connectionPool: UpstreamConnectionPool
+        connectionPool: UpstreamConnectionPool,
+        stateStore: SessionStateStore
     ): Session {
         const now = new Date();
-        const session = new Session(id, bundleId, now, namespaceService, permissionService, connectorFactory, connectionPool, now, SessionState.Active);
+        const session = new Session(id, bundleId, now, namespaceService, permissionService, connectorFactory, connectionPool, now, SessionState.Active, stateStore);
         session.addDomainEvent(createSessionEstablished(id, bundleId));
         return session;
     }
@@ -275,17 +286,17 @@ export class Session extends EventEmitter {
         let isFromPool = false;
 
         // Session controls pooling strategy
-        if (config.stateless && this.connectionPool.has(config.namespace, config.url)) {
+        if (config.pooled && this.connectionPool.has(config.namespace, config.url)) {
             connector = this.connectionPool.get(config.namespace, config.url)!;
             isFromPool = true;
-            logger.debug({ sessionId: this.id, namespace: config.namespace }, "Reusing stateless upstream from pool");
+            logger.debug({ sessionId: this.id, namespace: config.namespace }, "Reusing pooled upstream connector");
         } else {
             connector = await this.connectorFactory.createConnector(config, this.namespaceService, this.permissionService);
-            if (config.stateless) {
+            if (config.pooled) {
                 this.connectionPool.set(config.namespace, config.url, connector);
-                logger.debug({ sessionId: this.id, namespace: config.namespace }, "Created stateless upstream in pool");
+                logger.debug({ sessionId: this.id, namespace: config.namespace }, "Created pooled upstream connector");
             } else {
-                logger.debug({ sessionId: this.id, namespace: config.namespace }, "Created stateful upstream");
+                logger.debug({ sessionId: this.id, namespace: config.namespace }, "Created unpooled upstream connector");
             }
         }
 
@@ -358,7 +369,7 @@ export class Session extends EventEmitter {
             }
 
             try {
-                const options = this.buildRequestOptions(namespace, "list_tools");
+                const options = await this.buildRequestOptions(namespace, "list_tools");
                 const result = await connector.listTools(params, options);
                 allTools.push(...result.tools);
 
@@ -420,7 +431,7 @@ export class Session extends EventEmitter {
             }
 
             // Forward params with resumption support - connector handles namespace extraction and permission check
-            const options = this.buildRequestOptions(namespace, "call_tool");
+            const options = await this.buildRequestOptions(namespace, "call_tool");
             const rawResult = await connector.callTool(params, options);
             const result = await this.middlewareChain.onAfterToolCall(params, rawResult, ctx);
 
@@ -459,7 +470,7 @@ export class Session extends EventEmitter {
             }
 
             try {
-                const options = this.buildRequestOptions(namespace, "list_resources");
+                const options = await this.buildRequestOptions(namespace, "list_resources");
                 const result = await connector.listResources(params, options);
                 allResources.push(...result.resources);
 
@@ -509,7 +520,7 @@ export class Session extends EventEmitter {
             }
 
             // Forward params with resumption support - connector handles namespace extraction and permission check
-            const options = this.buildRequestOptions(namespace, "read_resource");
+            const options = await this.buildRequestOptions(namespace, "read_resource");
             const result = await connector.readResource(params, options);
 
             this.recordActivity();
@@ -544,7 +555,7 @@ export class Session extends EventEmitter {
             }
 
             try {
-                const options = this.buildRequestOptions(namespace, "list_resource_templates");
+                const options = await this.buildRequestOptions(namespace, "list_resource_templates");
                 const result = await connector.listResourceTemplates(params, options);
                 allTemplates.push(...result.resourceTemplates);
 
@@ -581,7 +592,7 @@ export class Session extends EventEmitter {
             }
 
             try {
-                const options = this.buildRequestOptions(namespace, "list_prompts");
+                const options = await this.buildRequestOptions(namespace, "list_prompts");
                 const result = await connector.listPrompts(params, options);
                 allPrompts.push(...result.prompts);
                 logger.debug({ sessionId: this.id, namespace, count: result.prompts.length }, "Listed prompts from upstream");
@@ -622,7 +633,7 @@ export class Session extends EventEmitter {
             }
 
             // Forward params with resumption support - connector handles namespace extraction and permission check
-            const options = this.buildRequestOptions(namespace, "get_prompt");
+            const options = await this.buildRequestOptions(namespace, "get_prompt");
             const result = await connector.getPrompt(params, options);
             this.recordActivity();
             logger.debug({ sessionId: this.id, namespace, prompt: params.name }, "Prompt get completed");
@@ -710,7 +721,7 @@ export class Session extends EventEmitter {
                 await connector.disconnect();
                 logger.debug({ sessionId: this.id, namespace }, "Disconnected stateful upstream");
             } else {
-                logger.debug({ sessionId: this.id, namespace }, "Keeping stateless upstream in pool");
+                logger.debug({ sessionId: this.id, namespace }, "Keeping pooled upstream connector");
             }
             this.addDomainEvent(createUpstreamDisconnected(this.id, namespace, reason));
         }

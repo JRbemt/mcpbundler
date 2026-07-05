@@ -1,8 +1,8 @@
 /**
  * Upstream Connection Pool
  *
- * Manages pooling of stateless upstream connections for reuse across sessions.
- * Stateful upstreams are not pooled and created per-session.
+ * Manages pooling of upstream connections marked `pooled` for reuse across sessions.
+ * Unpooled upstreams are created per-session and not shared.
  */
 
 import logger from "../../../shared/utils/logger.js";

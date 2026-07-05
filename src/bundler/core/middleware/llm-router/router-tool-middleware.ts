@@ -3,6 +3,7 @@ import { AbstractBundlerMiddleware, MiddlewareContext } from "../middleware.js";
 import { LLMRouterTool } from "./router-tool.js";
 import { LLMRouterEngine } from "./router-engine.js";
 import { LoadingStrategy } from "../../session/loading/loading-strategy.js";
+import { InMemorySessionStateStore, SessionStateStore } from "../../session/session-state-store.js";
 import logger from "../../../../shared/utils/logger.js";
 
 export interface LLMToolRouterConfig {
@@ -18,6 +19,8 @@ export interface LLMToolRouterConfig {
         maxActiveUpstreams?: number;
         toolName?: string;
     };
+    /** Defaults to a private InMemorySessionStateStore when omitted (e.g. in tests). */
+    store?: SessionStateStore;
 }
 
 const SET_CONTEXT_TOOL_DESCRIPTION =
@@ -41,16 +44,13 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
     private readonly setContextMaxActiveUpstreams: number;
     private readonly setContextToolName: string;
 
-    // Signal 1 state (local to this signal)
-    private callHistory: string[] = [];
-    private callsSinceLastRank = 0;
-
-    // Shared across signals - the last declared task context
-    private currentContext = "";
-
     // Tool names per namespace observed from live connections (fallback when MCPConfig.tools is absent)
     private liveCatalog: Map<string, string[]> = new Map();
 
+    // Signal 1 (callHistory, callsSinceLastRank) and the shared currentContext
+    // are plain, connection-less decision-state, so they live in the
+    // SessionStateStore rather than private fields - see session-state-store.ts.
+    private readonly store: SessionStateStore;
 
     constructor(config: LLMToolRouterConfig) {
         super();
@@ -62,6 +62,7 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
         this.setContextEnabled = config.setContext?.enabled ?? false;
         this.setContextMaxActiveUpstreams = config.setContext?.maxActiveUpstreams ?? 10;
         this.setContextToolName = config.setContext?.toolName ?? "bundler__set_context";
+        this.store = config.store ?? new InMemorySessionStateStore();
     }
 
     private buildLiveCatalog(tools: Tool[]): Map<string, string[]> {
@@ -126,14 +127,16 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
         }
 
         const task = (params.arguments as Record<string, unknown>)?.task;
+        let currentContext = (await this.store.get<string>(ctx.sessionId, "currentContext")) ?? "";
         if (typeof task === "string") {
-            this.currentContext = task;
+            currentContext = task;
+            await this.store.set(ctx.sessionId, "currentContext", currentContext);
         }
 
         if (ctx.loadingStrategy === LoadingStrategy.EAGER) {
             // Block until all selected upstreams are connected so tools are immediately
             // available when the agent processes this response.
-            await this.triggerReRank(ctx, this.currentContext, this.setContextMaxActiveUpstreams);
+            await this.triggerReRank(ctx, currentContext, this.setContextMaxActiveUpstreams);
             return {
                 content: [{ type: "text", text: "Context updated. Tools are ready." }],
             };
@@ -141,7 +144,7 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
 
         // PROGRESSIVE: fire-and-forget; client receives list_changed notifications
         // as each selected upstream comes online.
-        void this.triggerReRank(ctx, this.currentContext, this.setContextMaxActiveUpstreams);
+        void this.triggerReRank(ctx, currentContext, this.setContextMaxActiveUpstreams);
         return {
             content: [{ type: "text", text: "Context updated. Activating relevant tools..." }],
         };
@@ -153,24 +156,28 @@ export class LLMToolRouterMiddleware extends AbstractBundlerMiddleware {
     ): Promise<void> {
         if (!this.rollingWindowEnabled) return;
 
-        this.callHistory.push(params.name);
-        if (this.callHistory.length > this.windowSize) {
-            this.callHistory.shift();
+        const callHistory = (await this.store.get<string[]>(ctx.sessionId, "callHistory")) ?? [];
+        callHistory.push(params.name);
+        if (callHistory.length > this.windowSize) {
+            callHistory.shift();
         }
+        await this.store.set(ctx.sessionId, "callHistory", callHistory);
 
-        this.callsSinceLastRank++;
-        if (this.engine.isReady() && this.callsSinceLastRank >= this.reRankEveryNCalls) {
-            this.callsSinceLastRank = 0;
-            const context = "Recent calls: " + this.callHistory.join(", ");
+        let callsSinceLastRank = ((await this.store.get<number>(ctx.sessionId, "callsSinceLastRank")) ?? 0) + 1;
+        if (this.engine.isReady() && callsSinceLastRank >= this.reRankEveryNCalls) {
+            callsSinceLastRank = 0;
+            const context = "Recent calls: " + callHistory.join(", ");
             this.triggerReRank(ctx, context, this.rollingMaxActiveUpstreams);
         }
+        await this.store.set(ctx.sessionId, "callsSinceLastRank", callsSinceLastRank);
     }
 
     async onUpstreamAttached(namespace: string, ctx: MiddlewareContext): Promise<void> {
         if (!this.engine.isReady()) return;
         logger.debug({ namespace }, "LLMToolRouter: upstream attached, re-ranking");
-        if (this.setContextEnabled && this.currentContext) {
-            this.triggerReRank(ctx, this.currentContext, this.setContextMaxActiveUpstreams);
+        const currentContext = await this.store.get<string>(ctx.sessionId, "currentContext");
+        if (this.setContextEnabled && currentContext) {
+            this.triggerReRank(ctx, currentContext, this.setContextMaxActiveUpstreams);
         }
     }
 

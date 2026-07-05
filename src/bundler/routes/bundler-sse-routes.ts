@@ -20,6 +20,7 @@ import rateLimit from "express-rate-limit";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { SESSION_EVENTS } from "../core/session/session.js";
 import type { BundlerServer } from "../core/bundler.js";
+import { SessionIdentityResolver, TransportHeaderSessionIdentity } from "../core/session/session-identity.js";
 import logger from "../../shared/utils/logger.js";
 
 /**
@@ -42,6 +43,7 @@ interface SseTransportMeta {
 export function createSseRoutes(bundler: BundlerServer): Router {
   const router = Router();
   const startupGracePeriodMs = 1000;
+  const sessionIdentity: SessionIdentityResolver = new TransportHeaderSessionIdentity();
 
   // Store transport metadata by session ID
   const transportMeta = new Map<string, SseTransportMeta>();
@@ -79,15 +81,16 @@ export function createSseRoutes(bundler: BundlerServer): Router {
     }
 
     // Handle existing session reconnection
-    if (req.query.sessionId) {
-      if (bundler.getSession(req.query.sessionId as string)) {
-        logger.info({ sessionId: req.query.sessionId, userAgent: ua, ip }, "existing SSE connection reestablished");
+    const reconnectSessionId = sessionIdentity.resolve(req);
+    if (reconnectSessionId) {
+      if (bundler.getSession(reconnectSessionId)) {
+        logger.info({ sessionId: reconnectSessionId, userAgent: ua, ip }, "existing SSE connection reestablished");
         res.status(200);
       } else {
         res.status(400).json({
           body: "No session found"
         });
-        logger.warn({ unknownSessionId: req.query.sessionId, userAgent: ua, ip }, "trying to get unknown session");
+        logger.warn({ unknownSessionId: reconnectSessionId, userAgent: ua, ip }, "trying to get unknown session");
       }
       return;
     }
@@ -166,7 +169,7 @@ export function createSseRoutes(bundler: BundlerServer): Router {
   });
 
   router.post("/messages", async (req: Request, res: Response) => {
-    const sessionId: string = req.query.sessionId as string;
+    const sessionId = sessionIdentity.resolve(req) as string;
     const session = bundler.getSession(sessionId);
     const meta = transportMeta.get(sessionId);
 

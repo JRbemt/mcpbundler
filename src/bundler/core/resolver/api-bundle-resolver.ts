@@ -56,7 +56,7 @@ export class APIBundleResolver implements ResolverService {
     const upstreams = (data.mcps as any[]).map((mcp) =>
       MCPConfigSchema.parse({
         ...mcp,
-        stateless: mcp.stateless ?? false,
+        pooled: mcp.stateless ?? false,
         auth: mcp.auth?.method !== "none" ? mcp.auth : undefined,
       })
     );

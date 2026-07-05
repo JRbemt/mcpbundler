@@ -73,7 +73,7 @@ export function createMCPConfig(overrides: Partial<MCPConfig> = {}): MCPConfig {
   return {
     namespace: NAMESPACE_GITHUB,
     url: "https://mcp.github.com",
-    stateless: false,
+    pooled: false,
     authStrategy: "NONE",
     ...overrides,
   };
