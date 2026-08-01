@@ -5,420 +5,313 @@
   Aggregate multiple MCP servers into one unified interface.
 </p>
 
+Model Context Protocol (MCP) Bundler lets you combine multiple MCP servers into a single endpoint. Your AI agent connects once and gets access to tools, resources, and prompts from all configured servers - no need to manage multiple connections.
 
-Model Context Protocol (MCP) Bundler lets you combine multiple MCP servers into a single endpoint. Your AI agent connects once and gets access to tools, resources, and prompts from all configured servers - no need to manage multiple connections. MCPs have tremendous potential, but cannot yet be managed, configured, and deployed in a scalable way. 
-This project solves that for HTTP/SSE MCPs.
+Imagine: you have 5 agents running and you want to give them access to a new MCP server.
 
-Imagine: You have 5 agents running and you want to give them access to a new MCP server.
-
-**Without bundler**  
+**Without bundler**
 Update config on all 5 agents and restart them.
 
-**With bundler**  
+**With bundler**
 Add the MCP to the bundle. All 5 agents already pointing at that bundle endpoint now have access.
-
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/jrbemt/mcpbundler/master/assets/infographic.png" alt="diagram" width="800">
 </p>
 
-
 ## Table of Contents
 
-- [Use Cases](#use-cases)
+- [How It Works](#how-it-works)
+- [Modes](#modes)
+  - [YAML Mode](#yaml-mode)
+  - [API Mode](#api-mode)
+- [YAML Configuration Reference](#yaml-configuration-reference)
+  - [definitions](#definitions)
+  - [bundles](#bundles)
+  - [subscriptions](#subscriptions)
+  - [Auth Strategies](#auth-strategies)
+  - [LLM Tool Router](#llm-tool-router)
+- [Connecting a Client](#connecting-a-client)
+- [Running](#running)
+- [Metrics](#metrics)
+- [Contributing](#contributing)
 
-- [1. Getting Started](#1-getting-started)
-  - [1.1 Installation](#11-installation)
-  - [1.2 Quick Start Guide](#12-quick-start-guide)
-    - [1.2.1 Add an MCP Server](#121-add-an-mcp-server)
-    - [1.2.2 Create a Bundle](#122-create-a-bundle)
-    - [1.2.3 Create a Subscription and Generate a Token](#123-create-a-subscription-and-generate-a-token)
+---
 
-- [2. Command Line Interface (CLI)](#2-command-line-interface-cli)
-  - [2.1 YAML Config Mode](#21-yaml-config-mode)
+## How It Works
 
-- [3. Bundler](#3-bundler)
+An MCP client (Claude Desktop, an AI agent, VS Code) connects to the bundler with a single **bearer token**. The bundler:
 
-- [4. API](#4-api)
-  - [4.1 Users](#41-users)
-  - [4.2 Permissions](#42-permissions)
-  - [4.3 MCPs](#43-mcps)
-  - [4.4 Bundles](#44-bundles)
-  - [4.5 Subscriptions](#45-subscriptions)
-  - [4.6 LLM Providers](#46-llm-providers)
-  - [4.7 MCP Authentication Strategies](#47-mcp-authentication-strategies)
-  - [4.8 Metrics](#48-metrics)
+1. Looks up which subscription that token belongs to
+2. Reads which bundle that subscription points to - this determines which upstream MCP servers are included
+3. For each upstream MCP, injects the right credentials transparently based on the auth strategy
+4. Multiplexes all upstream tool/resource/prompt namespaces into a single MCP session
 
-- [5. Contributing](#5-contributing)
-## Use Cases
+The client only ever knows one endpoint and one token. All upstream authentication is handled server-side.
 
-- **Development**: Manage multiple development MCPs from one endpoint
-- **Production**: Centralize MCP access with proper authorisation controls
-- **Teams**: Share bundles of MCPs across team members
-- **Multi-tenant**: Manage many MCPs with many users in an organization
+---
 
-**Roadmap:**
+## Modes
 
-- [ ] Full OAuth2 support
-- [x] OpenAPI Docs
-- [ ] Web UI
-- [ ] Fine-grained permissions
-- [ ] Metrics dashboard for logs and metering
+### YAML Mode
 
-# 1. Getting Started
-<details>
+Everything is declared in a single YAML file. Bundles, subscriptions, credentials, and access tokens are all defined as code. This is the recommended mode for self-hosted deployments.
 
-<summary>A quickstart guide</summary>
-
-## 1.1 Installation
-The server requires Postgres. Clone the repository and start it with Docker Compose:
-```bash
-git clone https://github.com/jrbemt/mcpbundler
-cd mcpbundler
-cp .env.example .env
-# Edit .env: set POSTGRES_*, ENCRYPTION_KEY, ROOT_USER_*
-docker compose up
-```
-
-## 1.2 Quick Start Guide
-In this quickstart guide we will get you to run the server, and to connect your agent/client to your first bundle. 
-Which should look like this:
-<p align="center">
-  <img src="https://raw.githubusercontent.com/jrbemt/mcpbundler/master/assets/quickstart_demo.gif" alt="demo" width="800">
-</p>
-
-
-### 1.2.1 Add an MCP Server
-Once you have the server running it is time to add your first MCP. You can interact with the API through HTTP or the CLI tool. For most endpoints authentication is required with an API user token. The root admin token is presented when first starting the server; other user API tokens are either generated by a pre-existing user or through the **self-service endpoint** (if enabled).
-
-Add an MCP that runs locally with no authentication required:
-```bash
-mcpbundler --token %TOKEN% mcp add "files" "http://localhost:3001/mcp" --description "files for the R&D team"
-```
-
-### 1.2.2 Create a Bundle
-A bundle groups a subset of MCPs behind a single access endpoint. Bundles can optionally restrict which tools, resources, and prompts are exposed using regex patterns.
+Set `YAML_CONFIG` to the path of your config file:
 
 ```bash
-mcpbundler --token %TOKEN% bundle create "R&D team" "Basic R&D tools"
-mcpbundler --token %TOKEN% bundle mcp add %BUNDLE_ID% "files"
-mcpbundler --token %TOKEN% bundle show %BUNDLE_ID%
+YAML_CONFIG=./mcpbundler.yaml node dist/src/main.js
 ```
 
-### 1.2.3 Create a Subscription and Generate a Token
-A **subscription** is a named, persistent link from a user to a bundle. It stores credentials for `USER_SET` MCPs and an optional LLM router config. Access tokens inherit credentials from the subscription automatically - rotating credentials only requires updating the subscription, not every token.
+See [YAML Configuration Reference](#yaml-configuration-reference) and `mcpbundler.example.yaml` for the full schema.
 
-The recommended way to create subscriptions is via the YAML config and `sync` (see [YAML Config Mode](#21-yaml-config-mode)). You can also create them directly via the HTTP API (`POST /api/subscriptions`).
+### API Mode
 
-Once a subscription exists on the registry, generate an access token:
-```bash
-mcpbundler token "my-sub" --token %MGMT_TOKEN%
-```
-
-This reads `my-sub` from the `subscriptions:` block in your YAML config and calls `POST /api/subscriptions/my-sub/token`. The token is printed once and not stored.
-
-Place the returned token in your MCP client config as `Authorization: Bearer <token>`. To bypass bundles entirely, enable the wildcard token (see `.env` configuration) and use `*` as the bearer value - this grants access to all pre-authenticated MCPs in the registry.
-
-</details>
-
-# 2. Command Line Interface (CLI)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/jrbemt/mcpbundler/master/assets/cli.png" alt="diagram" width="800">
-</p>
-
-The CLI enables calling the management API from the command line. Install via npm:
-```bash
-npm install -g @jrbemt/mcpbundler
-```
-
-## 2.1 YAML Config Mode
-
-Instead of calling the API directly, you can describe your entire setup in a YAML file and push it with a single `sync` command. This is the recommended workflow for managing bundles and subscriptions as code.
+The bundler delegates bundle resolution to an external backend (the MCP Market FastAPI service). Set `BACKEND_URL` to the backend's base URL:
 
 ```bash
-# Push all changes described in mcpbundler.yaml to the registry
-mcpbundler sync --config mcpbundler.yaml --token %MGMT_TOKEN%
-
-# Generate an access token for a named subscription (reads subscription name from YAML)
-mcpbundler token my-sub --config mcpbundler.yaml --token %MGMT_TOKEN%
+BACKEND_URL=https://api.example.com node dist/src/main.js
 ```
 
-**Minimal example:**
+When a token arrives, the bundler calls `GET $BACKEND_URL/api/v1/bundler/resolve` with the token forwarded as the Authorization header. The backend returns the resolved bundle. No local config is needed.
+
+---
+
+## YAML Configuration Reference
+
+Secrets belong in `.env` (or environment variables) and are referenced in YAML with `${VAR_NAME}`. Interpolation happens after YAML parsing so env var values cannot corrupt the YAML structure.
+
+### definitions
+
+Shared resources referenced by bundles.
 
 ```yaml
 definitions:
-  llm_bindings:
-    - provider: claude
-      api_key: "${ANTHROPIC_API_KEY}" 
-
   mcps:
     - namespace: github
       url: "https://github-mcp.example.com/mcp"
-      capabilities: ["git", "pull-requests", "code-review"]  
+      pooled: true
+      description: "GitHub repository management"
+      capabilities: ["git", "pull-requests", "code-review"]
       auth:
         method: bearer
-        token: "${GITHUB_TOKEN}"         
+        token: "${GITHUB_MASTER_TOKEN}"
 
     - namespace: jira
       url: "https://jira-mcp.example.com/mcp"
-      capabilities: ["issue-tracking", "project-management"]
-                                    
+      description: "Jira issue tracking"
 
+  llms:
+    - name: local-llama
+      type: openai-compatible
+      model: llama3.2:3b
+      endpoint: "http://localhost:11434/v1"
+      temperature: 0.1
+      max_tokens: 256
+```
+
+Each MCP entry requires `namespace` and `url`. `auth` provides the upstream credentials (used for `MASTER` auth strategy). `capabilities` improves LLM tool router accuracy.
+
+`llms` registers LLM providers for the tool router middleware. Use any OpenAI-compatible endpoint, including local Ollama models.
+
+### bundles
+
+A bundle is a named collection of MCPs. Each MCP entry sets an `auth_strategy` that controls how credentials are resolved at request time.
+
+```yaml
 bundles:
   - name: dev-tools
-    loading_strategy: eager
     mcps:
-      - ref: github
+      - ref: github          # references definitions.mcps[namespace=github]
         auth_strategy: MASTER
+
       - ref: jira
         auth_strategy: USER_SET
 
+      - namespace: notion    # inline definition (not in definitions block)
+        url: "https://notion-mcp.example.com/mcp"
+        auth_strategy: USER_SET
+```
+
+Three ways to include an MCP in a bundle:
+
+| Form | When to use |
+|------|-------------|
+| `ref: <namespace>` | References an entry from `definitions.mcps` |
+| Inline (`namespace` + `url`) | One-off MCP not shared across bundles |
+| Registry ref (`namespace` + `registry`) | References an MCP on an external registry (not resolvable in YAML mode) |
+
+### subscriptions
+
+A subscription links a set of tokens to a bundle, carrying per-MCP credentials for `USER_SET` MCPs and an optional router config.
+
+```yaml
 subscriptions:
-  - name: my-sub
+  - name: alice
+    tokens:
+      claude-desktop: "${ALICE_CLAUDE_TOKEN}"
+      vscode: "${ALICE_VSCODE_TOKEN}"
     bundle: dev-tools
     credentials:
       jira:
-        method: api_key
-        key: "${MY_JIRA_KEY}"
-        header: "X-API-Token"
+        auth:
+          method: api_key
+          key: "${ALICE_JIRA_KEY}"
+          header: "X-API-Token"
+        permissions:
+          allowed_tools: ["get_issue", "create_issue", "search_issues"]
+          allowed_resources: ["*"]
+          allowed_prompts: ["*"]
+      notion:
+        auth:
+          method: bearer
+          token: "${ALICE_NOTION_TOKEN}"
     router:
-      model: claude                      # use Claude to intelligently route tool calls
+      model: local-llama
 ```
 
-`mcpbundler sync` runs four phases in order:
+Each key under `tokens` is a label (e.g. which client it belongs to); each value is the actual bearer token. All tokens for a subscription resolve to the same bundle and credentials. This lets you issue separate revocable tokens per client without duplicating the subscription.
 
-| Phase | What it does |
-|-------|-------------|
-| 0 | Bind LLM provider API keys from `definitions.llm_bindings` |
-| 1 | Upsert inline MCPs by namespace (create or update) |
-| 2 | Find-or-create bundles, reconcile MCP membership |
-| 3 | Upsert subscriptions with credentials and router config |
+`credentials` is a map from MCP namespace to auth config + optional permissions. Only namespaces present here are resolved for `USER_SET` MCPs; missing ones are excluded from the session.
 
-See `mcpbundler.example.yaml` for a fully annotated configuration reference.
+### Auth Strategies
 
-# 3. Bundler
+| Strategy | Description |
+|----------|-------------|
+| `NONE` | No authentication required on the upstream MCP |
+| `MASTER` | Shared credentials from the MCP definition in `definitions.mcps`. All subscribers use the same upstream credentials. |
+| `USER_SET` | Per-subscription credentials from the `credentials` map. Each subscriber provides their own credential for that namespace. |
 
-The bundler can be reached by any MCP client on:
+Supported credential formats:
+
+```yaml
+auth:
+  method: none
+
+auth:
+  method: bearer
+  token: "..."
+
+auth:
+  method: basic
+  username: "..."
+  password: "..."
+
+auth:
+  method: api_key
+  key: "..."
+  header: "X-API-Key"   # default
+
+auth:
+  method: headers
+  headers:
+    X-Custom-Header: "..."
+    X-Another: "..."
 ```
-[base]/mcp
+
+### LLM Tool Router
+
+The tool router is optional middleware that uses an LLM to decide which upstream namespaces to activate for a given request, instead of connecting all of them upfront. This reduces connection overhead and agent context window usage for large bundles.
+
+Configure it per subscription via `router`:
+
+```yaml
+router:
+  model: local-llama        # references a name from definitions.llms
+  set_context:
+    enabled: true           # expose bundler__set_context as the first (only) tool
+    max_active_upstreams: 6
+  rolling_window:
+    enabled: true           # re-rank based on recent tool call history
+    max_active_upstreams: 6
+    window_size: 10
+    re_rank_every_n_calls: 5
 ```
-To use the bundler, no user account is needed. Just a bundle access (or a wildcard) token.
 
-# 4. API
+Set `model: allpass` (or omit `router`) to disable routing and connect all upstreams unconditionally.
 
-All management endpoints are under `/api`. Most require an API user token passed via the `Authorization: Bearer <token>` header. The root admin token is printed to the console on first startup.
+`capabilities` on each MCP definition contributes to routing accuracy. The router builds a selection prompt listing every MCP in the bundle with its namespace, description, capabilities, and known tool names.
 
-OpenAPI documentation is available at `/api/docs`. The raw OpenAPI 3.0 spec is served at `/api/openapi.json`. Use the "Authorize" button in the UI to set your `mbk_...` token and execute requests directly against the running server.
+---
 
-<details>
-<summary>4.1 Users</summary>
+## Connecting a Client
 
-User accounts authenticate to the management API. The system is hierarchical: users can create other users and manage their descendants.
+The bundler exposes an MCP endpoint at:
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/users/self` | None | Self-service registration (if enabled) |
-| `POST` | `/api/users` | User with `CREATE_USER` | Create a new user |
-| `GET` | `/api/users` | User with `LIST_USERS` | List all users |
-| `GET` | `/api/users/me` | User | Get own profile with created users |
-| `PUT` | `/api/users/me` | User | Update own profile |
-| `POST` | `/api/users/me/revoke` | User | Revoke own API key |
-| `POST` | `/api/users/:userId/revoke` | User | Revoke a user you created (cascades to descendants) |
-| `GET` | `/api/users/by-name/:name` | Admin | Get user by name |
+```
+POST /mcp
+```
 
-</details>
-
-<details>
-<summary>4.2 Permissions</summary>
-
-Four permission scopes can be assigned to an user account:
-
-| Permission | Description |
-|------------|-------------|
-| `CREATE_USER` | Create new users |
-| `ADD_MCP` | Add MCP servers to the registry |
-| `LIST_USERS` | List all users in the organization |
-| `VIEW_PERMISSIONS` | View other users' permissions |
-
-A user creating another user can only assign permissions equal to or more restrictive than their own.
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `GET` | `/api/permissions` | None | List all permission types |
-| `GET` | `/api/permissions/me` | User | Get own permissions |
-| `GET` | `/api/permissions/user-id/:id` | User with `VIEW_PERMISSIONS` | Get user permissions |
-| `POST` | `/api/permissions/user-id/:id/add` | User | Add permissions (optional cascade via `propagate`) |
-| `POST` | `/api/permissions/user-id/:id/remove` | User | Remove permissions (cascades to descendants) |
-
-</details>
-
-<details>
-<summary>4.3 MCPs</summary>
-
-The MCP endpoints are for maintaining the MCP registry. Each MCP has a unique namespace.
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `GET` | `/api/mcps` | User | List all MCPs |
-| `POST` | `/api/mcps` | User with `ADD_MCP` | Add a new MCP |
-| `GET` | `/api/mcps/:namespace` | User | Get MCP by namespace |
-| `PUT` | `/api/mcps/:namespace` | User | Update MCP (owner or ancestor) |
-| `DELETE` | `/api/mcps/:namespace` | User | Delete MCP (owner or ancestor, cascades to bundles) |
-| `DELETE` | `/api/mcps/all` | User | Bulk delete all MCPs created by you and your descendants |
-
-</details>
-
-<details>
-<summary>4.4 Bundles</summary>
-
-A bundle groups a subset of MCPs behind a single access token. Bundles can restrict which tools, resources, and prompts are exposed using regex patterns.
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `GET` | `/api/bundles` | User | List all bundles |
-| `GET` | `/api/bundles/me` | User | List bundles created by you and your descendants |
-| `POST` | `/api/bundles` | User | Create a bundle |
-| `GET` | `/api/bundles/:id` | User | Get bundle details with MCPs |
-| `POST` | `/api/bundles/:id` | User | Add MCP(s) to bundle by namespace |
-| `DELETE` | `/api/bundles/:id` | User | Delete bundle (owner or ancestor) |
-| `DELETE` | `/api/bundles/:id/:namespace` | User | Remove MCP from bundle |
-
-**Loading strategies**
-
-`loading_strategy` controls how upstream MCP connections are established once the set of namespaces to load has been determined.
-
-| Strategy | Behavior |
-|----------|----------|
-| `eager` (default) | All upstreams connect in parallel before the session handshake completes (or before `bundler__set_context` returns). The agent receives the full tool list on its first `tools/list` call with no follow-up `list_changed` notifications. |
-| `progressive` | Upstreams connect in parallel in the background. The agent receives incremental `list_changed` notifications as each upstream comes online, and can start working with the first available tools immediately. |
-
-**Smart tool selection with `set_context`**
-
-When `set_context` is enabled on the subscription's router config, the LLM selects which namespaces to load before any upstream connects. The agent's first (and only) visible tool is `bundler__set_context`. Calling it with a one-sentence task description triggers an LLM ranking pass over the full bundle catalog - using static `capabilities` and `tools` metadata from the registry - and connects only the relevant namespaces. The loading strategy then controls how those selected upstreams come online.
-
-With `eager` (the default), `bundler__set_context` blocks until all selected upstreams are connected and returns "Tools are ready." The agent can call tools immediately after. With `progressive`, the response returns at once and upstreams appear via `list_changed` notifications.
-
-This is the recommended configuration for large bundles where most tasks only need a subset of the available MCPs. Connection cost and agent context window usage scale with what the agent actually needs, not with total bundle size.
-
-**Bundle Token endpoints:**
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/bundles/:id/tokens` | User | Generate a bundle access token |
-| `GET` | `/api/bundles/:id/tokens` | User | List tokens for a bundle |
-| `DELETE` | `/api/bundles/:id/tokens/:tokenId` | User | Revoke a token |
-
-</details>
-
-<details>
-<summary>4.5 Subscriptions</summary>
-
-A subscription is a named, persistent link from a user to a bundle. It stores credentials for `USER_SET` MCPs and an optional LLM router config. Access tokens generated from a subscription inherit its credentials automatically - rotating credentials only requires updating the subscription, not re-issuing every token.
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/subscriptions` | User | Create or update a subscription by name |
-| `GET` | `/api/subscriptions` | User | List your subscriptions |
-| `GET` | `/api/subscriptions/:name` | User | Get a single subscription |
-| `DELETE` | `/api/subscriptions/:name` | User | Delete subscription and cascade to its tokens |
-| `POST` | `/api/subscriptions/:name/token` | User | Generate an access token for this subscription |
-
-**Subscription body:**
+Pass your subscription token as a bearer token:
 
 ```json
 {
-  "name": "my-sub",
-  "bundleId": "uuid",
-  "credentials": {
-    "stripe": { "method": "bearer", "token": "sk_live_..." },
-    "jira":   { "method": "api_key", "key": "...", "header": "X-API-Token" }
-  },
-  "router": {
-    "model": "claude"
+  "mcpServers": {
+    "bundler": {
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-token>"
+      }
+    }
   }
 }
 ```
 
-Credentials are keyed by MCP namespace and follow the same format as the MCP auth config. Only namespaces present in the subscription are resolved; `USER_SET` MCPs without a matching credential are excluded from the resolved bundle.
+A legacy SSE transport is also available at `GET /sse` + `POST /messages` for clients that do not support StreamableHTTP.
 
-</details>
+---
 
-<details>
-<summary>4.6 LLM Providers</summary>
+## Running
 
-The **tool router** is middleware that sits between an AI client and the upstream MCP servers in a bundle. Instead of forwarding every tool call to every upstream, it uses an LLM to decide which upstream is relevant for each request - reducing unnecessary connections and latency. Setting `router.model: allpass` (or omitting `router`) disables routing and forwards all calls to all upstreams as before.
+**Local (Node):**
 
-Registry-managed LLM providers (claude, chatgpt, gemini) are pre-seeded by the server. Users bind their personal API key to a provider once; the key is resolved automatically when a subscription references that provider via `router.model`.
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `GET` | `/api/llm-providers` | User | List all available LLM providers |
-| `PUT` | `/api/llm-bindings/:provider` | User | Bind your API key to a provider |
-| `DELETE` | `/api/llm-bindings/:provider` | User | Remove your API key binding |
-
-**Bind request body:**
-```json
-{ "apiKey": "sk-ant-..." }
+```bash
+cp .env.example .env
+# Set YAML_CONFIG or BACKEND_URL in .env
+npm install
+npm run build
+npm start
 ```
 
-API keys are stored encrypted per user. When a bundle is resolved, the server looks up the binding for the token owner and injects the decrypted key into the resolved bundle's router config. The bundler then creates a per-session LLM client from that key - keys are never shared across sessions or users.
+**Docker Compose:**
 
-For self-hosted models (Ollama, local OpenAI-compatible endpoints), define them under `definitions.llms` in the YAML config. These are registered directly on startup and do not require an API key binding.
-
-**Improving routing quality with capabilities and tools**
-
-The LLM router builds a selection prompt that lists every MCP in the bundle. Richer metadata per MCP leads to more accurate namespace selection, especially before any upstream connection has been established.
-
-Two fields contribute to this metadata:
-
-- `capabilities` - a list of short keyword strings describing what the MCP does (e.g. `["git", "pull-requests", "code-review"]`). Set these when registering an MCP via the API or YAML config. They appear in the selection prompt alongside the namespace name.
-- `tools` - the actual tool names exposed by the MCP (e.g. `create_issue`, `list_prs`). When an MCP is registered through the marketplace backend, tool names are populated automatically from the published MCP version. In self-hosted YAML mode the bundler can also fall back to the live tool list of any already-connected upstream.
-
-The selection prompt the router sees for each MCP looks like:
-
-```
-- github (GitHub MCP for repository management)
-  [capabilities: git, pull-requests, code-review] [tools: create_issue, list_prs, merge_pr, ...]
+```bash
+cp .env.example .env
+# Set YAML_CONFIG or BACKEND_URL in .env
+docker compose up
 ```
 
-Both fields are optional. When neither is present the router falls back to namespace name and description only. If the LLM cannot determine relevant namespaces it falls back to all-pass, so routing never silently deactivates tools.
+The bundler listens on port `3000` by default (override with `PORT`). A Prometheus metrics scraper is included in the compose file.
 
-</details>
+**Environment variables:**
 
-<details>
-<summary>4.7 MCP Authentication Strategies</summary>
-
-Each MCP server uses one of three authentication strategies:
-
-| Strategy | Description |
+| Variable | Description |
 |----------|-------------|
-| `NONE` | No authentication required to connect to the upstream MCP |
-| `MASTER` | Shared credentials configured when adding the MCP. All bundle tokens use the same credentials. |
-| `USER_SET` | Per-subscription credentials. Each subscriber provides their own credential in their subscription's `credentials` map, keyed by MCP namespace. |
+| `YAML_CONFIG` | Path to YAML config file (YAML mode) |
+| `BACKEND_URL` | Base URL of the MCP Market backend (API mode) |
+| `PORT` | HTTP port (default: `3000`) |
+| `LOG_LEVEL` | Pino log level (default: `info`) |
 
-`USER_SET` enables scenarios where multiple users share a bundle but each connects to the underlying MCP server using their own credentials.
+One of `YAML_CONFIG` or `BACKEND_URL` must be set. If neither is set the server exits with an error.
 
-Supported credential formats: `bearer`, `basic`, `api_key`, `none`.
+---
 
-</details>
-
-<details>
-<summary>4.8 Metrics</summary>
+## Metrics
 
 ```
 GET /metrics
 ```
 
-Returns server metrics including active sessions, upstreams, and health status.
+Returns Prometheus metrics including active sessions, upstream connections, and request counts.
 
-</details>
+```
+GET /status
+```
 
+Returns server health, active session count, and uptime.
 
+---
 
+## Contributing
 
-# 5. Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

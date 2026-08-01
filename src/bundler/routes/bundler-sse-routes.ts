@@ -82,6 +82,14 @@ export function createSseRoutes(bundler: BundlerServer): Router {
 
     // Handle existing session reconnection
     const reconnectSessionId = sessionIdentity.resolve(req);
+
+    // Reject only NEW sessions while draining - an existing session
+    // reconnecting (handled just below) is allowed to keep going.
+    if (!reconnectSessionId && bundler.isDraining()) {
+      res.status(503).json({ error: "Server is shutting down, please retry against another instance" });
+      return;
+    }
+
     if (reconnectSessionId) {
       if (bundler.getSession(reconnectSessionId)) {
         logger.info({ sessionId: reconnectSessionId, userAgent: ua, ip }, "existing SSE connection reestablished");
@@ -130,7 +138,7 @@ export function createSseRoutes(bundler: BundlerServer): Router {
     logger.info({ sessionId, userAgent: ua, ip }, "starting new SSE connection");
 
     // Create session using new architecture
-    const session = bundler.createSession(sessionId, bundleConfig.bundleId);
+    const session = bundler.createSession(sessionId, bundleConfig.bundleId, token);
 
     // Attach resolved upstreams from bundle (async)
     bundler.attachUpstreamsAsync(session, bundleConfig.upstreams).then(() => {

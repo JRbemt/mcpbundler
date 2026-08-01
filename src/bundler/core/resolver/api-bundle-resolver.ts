@@ -2,7 +2,7 @@
  * API Bundle Resolver - backend-integrated bundle resolution
  *
  * Implements ResolverService by delegating token validation and bundle resolution
- * to the FastAPI backend via GET /api/v1/bundler/resolve.  This replaces the
+ * to the FastAPI backend via GET /v1/bundler/resolve.  This replaces the
  * DBBundleResolver when BACKEND_URL is set, making the backend the single source
  * of truth for bundle configurations and access tokens.
  *
@@ -14,6 +14,9 @@
 import { Bundle, BundleRouterConfigSchema, MCPConfigSchema } from "../schemas.js";
 import { ResolverService } from "./service.js";
 import logger from "../../../shared/utils/logger.js";
+
+// Backend resolve calls must not hang indefinitely if the backend is slow rather than down.
+const RESOLVE_TIMEOUT_MS = 10_000;
 
 export class APIBundleResolver implements ResolverService {
   constructor(private readonly backendUrl: string) { }
@@ -28,13 +31,14 @@ export class APIBundleResolver implements ResolverService {
    * @throws Error with `.status` set to the HTTP status code on failure
    */
   async resolveBundle(token: string): Promise<Bundle> {
-    const url = `${this.backendUrl}/api/v1/bundler/resolve`;
+    const url = `${this.backendUrl}/v1/bundler/resolve`;
     logger.debug({ url }, "Resolving bundle via backend API");
 
     let response: Response;
     try {
       response = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
       });
     } catch (cause) {
       const err: any = new Error(`Backend unreachable at ${url}`);
@@ -53,13 +57,23 @@ export class APIBundleResolver implements ResolverService {
 
     const data = await response.json();
 
-    const upstreams = (data.mcps as any[]).map((mcp) =>
-      MCPConfigSchema.parse({
+    // A single malformed entry (e.g. an auth payload the schema rejects) must not
+    // fail resolution of the whole bundle - skip and log it, keep the rest.
+    const upstreams = (data.mcps as any[]).flatMap((mcp) => {
+      const parsed = MCPConfigSchema.safeParse({
         ...mcp,
-        pooled: mcp.stateless ?? false,
+        pooled: mcp.pooled ?? false,
         auth: mcp.auth?.method !== "none" ? mcp.auth : undefined,
-      })
-    );
+      });
+      if (!parsed.success) {
+        logger.warn(
+          { namespace: mcp?.namespace, issues: parsed.error.issues },
+          "Skipping malformed MCP entry in bundle resolve response"
+        );
+        return [];
+      }
+      return [parsed.data];
+    });
 
     let router: Bundle["router"] = undefined;
     if (data.router) {

@@ -53,7 +53,7 @@ const YamlRefMcpExternalSchema = z.object({
 const YamlRefMcpInlineSchema = z.object({
     namespace: z.string().regex(NAMESPACE_PATTERN, NAMESPACE_MESSAGE),
     url: z.url(),
-    stateless: z.boolean().default(false),
+    pooled: z.boolean().default(false),
     auth: MCPAuthConfigSchema.optional(),
     description: z.string().optional(),
     capabilities: z.array(z.string()).optional().default([]),
@@ -95,7 +95,7 @@ const YamlBundleMcpRegistryRefSchema = z.object({
 const YamlBundleMcpInlineSchema = z.object({
     namespace: z.string().regex(NAMESPACE_PATTERN, NAMESPACE_MESSAGE),
     url: z.url(),
-    stateless: z.boolean().default(false),
+    pooled: z.boolean().default(false),
     auth_strategy: AuthStrategyLiteralSchema,
     auth: MCPAuthConfigSchema.optional(),
     description: z.string().optional(),

@@ -55,10 +55,48 @@ export type AuditDetails<T> =
   | Record<string, unknown>
   | ((ctx: { result?: T; error?: unknown }) => Record<string, unknown>);
 
+const BACKEND_URL = (process.env.BACKEND_URL ?? "").replace(/\/$/, "");
+
+function pushTelemetry(args: {
+  accessToken: string;
+  action: AuditBundlerAction;
+  success: boolean;
+  latencyMs: number;
+  toolName?: string;
+  mcpNamespace?: string;
+  bytesTransferred?: number;
+  errorMessage?: string;
+}): void {
+  if (!BACKEND_URL) return;
+  fetch(`${BACKEND_URL}/v1/bundler/telemetry`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${args.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      action: args.action,
+      success: args.success,
+      mcp_namespace: args.mcpNamespace ?? null,
+      tool_name: args.toolName ?? null,
+      latency_ms: Math.round(args.latencyMs),
+      bytes_transferred: args.bytesTransferred ?? null,
+      error_message: args.errorMessage ?? null,
+    }),
+    signal: AbortSignal.timeout(5000),
+  }).catch((err) => logger.warn({ err }, "Failed to push telemetry"));
+  // Deliberately not awaited - telemetry push must never add latency to,
+  // or be able to fail, the actual MCP response path.
+}
+
 export async function withAudit<T>(args: {
   fn: () => Promise<T>;
   action: AuditBundlerAction;
   sessionId: string;
+  accessToken: string;
+  toolName?: string;
+  mcpNamespace?: string;
+  bytesOf?: (result: T) => number;
   details?: AuditDetails<T>;
 }): Promise<T> {
   const resolveDetails = (ctx: { result?: T; error?: unknown }) =>
@@ -66,8 +104,11 @@ export async function withAudit<T>(args: {
       ? args.details(ctx)
       : args.details;
 
+  const startedAt = Date.now();
+
   try {
     const result = await args.fn();
+    const latencyMs = Date.now() - startedAt;
 
     auditBundlerLog({
       action: args.action,
@@ -75,15 +116,36 @@ export async function withAudit<T>(args: {
       success: true,
       details: resolveDetails({ result }),
     });
+    pushTelemetry({
+      accessToken: args.accessToken,
+      action: args.action,
+      success: true,
+      latencyMs,
+      toolName: args.toolName,
+      mcpNamespace: args.mcpNamespace,
+      bytesTransferred: args.bytesOf ? args.bytesOf(result) : undefined,
+    });
 
     return result;
   } catch (e) {
+    const latencyMs = Date.now() - startedAt;
+    const errorMessage = e instanceof Error ? e.message : String(e);
+
     auditBundlerLog({
       action: args.action,
       sessionId: args.sessionId,
       success: false,
-      errorMessage: e instanceof Error ? e.message : String(e),
+      errorMessage,
       details: resolveDetails({ error: e }),
+    });
+    pushTelemetry({
+      accessToken: args.accessToken,
+      action: args.action,
+      success: false,
+      latencyMs,
+      toolName: args.toolName,
+      mcpNamespace: args.mcpNamespace,
+      errorMessage,
     });
 
     throw e;

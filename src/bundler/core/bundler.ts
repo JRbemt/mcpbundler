@@ -62,6 +62,13 @@ export class BundlerServer {
   private bundleResolver: ResolverService;
   private app: express.Application;
 
+  // Set at the start of shutdown() and never cleared - routes check this to
+  // reject NEW sessions while letting already-open ones keep running until
+  // they end naturally or the drain timeout forces them closed. This is what
+  // lets a rolling Kubernetes deploy phase out an old pod's connections
+  // instead of cutting every active session the instant SIGTERM arrives.
+  private draining = false;
+
   // Shared services across sessions
   private namespaceResolver: NamespaceResolver;
   private permissionManager: PermissionManager;
@@ -137,7 +144,8 @@ export class BundlerServer {
       return await withAudit({
         fn: () => session.listTools(req.params),
         action: AuditBundlerAction.MCP_TOOLS_LIST,
-        sessionId: session.id
+        sessionId: session.id,
+        accessToken: session.accessToken
       });
     });
 
@@ -152,10 +160,26 @@ export class BundlerServer {
       }
 
       const session = this.sessions.get(sessionId)!
+      let mcpNamespace: string | undefined;
+      let toolName = req.params.name;
+      try {
+        const parsed = this.namespaceResolver.extractNamespaceFromName(req.params.name);
+        mcpNamespace = parsed.namespace;
+        toolName = parsed.address;
+      } catch (err) {
+        // Telemetry annotation must never block the actual tool call - fall
+        // back to the raw name if it doesn't parse as namespace__name (e.g.
+        // a middleware-owned tool outside the normal convention).
+        logger.debug({ err, name: req.params.name }, "Could not split tool name into namespace/address for telemetry");
+      }
       return await withAudit({
         fn: () => session.callTool(req.params),
         action: AuditBundlerAction.MCP_TOOL_CALL,
-        sessionId: session.id
+        sessionId: session.id,
+        accessToken: session.accessToken,
+        toolName,
+        mcpNamespace,
+        bytesOf: (result) => JSON.stringify(result).length,
       });
     });
 
@@ -172,7 +196,8 @@ export class BundlerServer {
       return await withAudit({
         fn: () => session.listResources(req.params),
         action: AuditBundlerAction.MCP_RESOURCES_LIST,
-        sessionId: session.id
+        sessionId: session.id,
+        accessToken: session.accessToken
       });
     });
 
@@ -188,8 +213,9 @@ export class BundlerServer {
       const session = this.sessions.get(sessionId)!
       return await withAudit({
         fn: () => session.listResourceTemplates(req.params),
-        action: AuditBundlerAction.MCP_RESOURCES_LIST,
-        sessionId: session.id
+        action: AuditBundlerAction.MCP_RESOURCE_TEMPLATES_LIST,
+        sessionId: session.id,
+        accessToken: session.accessToken
       });
     });
 
@@ -206,7 +232,8 @@ export class BundlerServer {
       return await withAudit({
         fn: () => session.readResource(req.params),
         action: AuditBundlerAction.MCP_RESOURCE_READ,
-        sessionId: session.id
+        sessionId: session.id,
+        accessToken: session.accessToken
       });
     });
 
@@ -223,7 +250,8 @@ export class BundlerServer {
       return await withAudit({
         fn: () => session.listPrompts(req.params),
         action: AuditBundlerAction.MCP_PROMPTS_LIST,
-        sessionId: session.id
+        sessionId: session.id,
+        accessToken: session.accessToken
       });
     });
 
@@ -240,7 +268,8 @@ export class BundlerServer {
       return await withAudit({
         fn: () => session.getPrompt(req.params),
         action: AuditBundlerAction.MCP_PROMPT_GET,
-        sessionId: session.id
+        sessionId: session.id,
+        accessToken: session.accessToken
       });
     });
 
@@ -279,10 +308,11 @@ export class BundlerServer {
    * Stores the full bundle catalog on the session so middleware can inspect
    * available (but not yet attached) upstreams.
    */
-  public createSession(sessionId: string, bundleId: string, availableUpstreams: MCPConfig[] = []): Session {
+  public createSession(sessionId: string, bundleId: string, accessToken: string, availableUpstreams: MCPConfig[] = []): Session {
     const session = Session.create(
       sessionId,
       bundleId,
+      accessToken,
       this.namespaceResolver,
       this.permissionManager,
       this.connectorFactory,
@@ -355,6 +385,10 @@ export class BundlerServer {
 
   public getServerStartTime(): number {
     return this.serverStartTime;
+  }
+
+  public isDraining(): boolean {
+    return this.draining;
   }
 
   /**
@@ -518,23 +552,26 @@ export class BundlerServer {
   }
 
   /**
-   * Graceful shutdown
+   * Graceful shutdown - phases out active connections instead of cutting them.
+   *
+   * Sets `draining` so routes stop accepting new sessions immediately, then
+   * waits for currently-open sessions to end on their own (client disconnect,
+   * idle timeout) rather than force-closing them. `SHUTDOWN_DRAIN_TIMEOUT_MS`
+   * is a backstop: if sessions are still open when it elapses, they're force-
+   * closed and shutdown proceeds anyway. Keep this value comfortably below
+   * the Kubernetes Pod's `terminationGracePeriodSeconds` (see
+   * infra/k8s/base/bundler/deployment.yaml) so the process can exit cleanly
+   * and log what it force-closed, instead of being SIGKILLed mid-drain with
+   * no chance to record why.
    */
   async shutdown(): Promise<void> {
-    logger.info({ msg: "shutting down server" });
+    logger.info({ msg: "shutting down server - draining active sessions" });
+    this.draining = true;
 
-    // Close all active sessions
-    for (const [sid, session] of this.sessions) {
-      try {
-        await session.close();
-      } catch (e) {
-        logger.warn({ msg: "error during session shutdown", sessionId: sid, e });
-      }
-    }
-
-    // Close HTTP server
-    return new Promise((resolve) => {
+    const httpClosed = new Promise<void>((resolve) => {
       if (this.httpServer) {
+        // Stops accepting NEW connections; resolves once every currently-open
+        // connection (including long-lived SSE streams) has ended on its own.
         this.httpServer.close(() => {
           logger.info({ msg: "http server closed" });
           resolve();
@@ -543,6 +580,26 @@ export class BundlerServer {
         resolve();
       }
     });
+
+    const drainTimeoutMs = parseInt(process.env.SHUTDOWN_DRAIN_TIMEOUT_MS || "", 10) || 4 * 60 * 60 * 1000;
+    const timedOut = await Promise.race([
+      httpClosed.then(() => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(true), drainTimeoutMs)),
+    ]);
+
+    if (timedOut) {
+      logger.warn(
+        { remainingSessions: this.sessions.size, drainTimeoutMs },
+        "Drain timeout elapsed with sessions still open - force-closing remaining sessions"
+      );
+      for (const [sid, session] of this.sessions) {
+        try {
+          await session.close();
+        } catch (e) {
+          logger.warn({ msg: "error during forced session shutdown", sessionId: sid, e });
+        }
+      }
+    }
   }
 
   getApp(): express.Application {

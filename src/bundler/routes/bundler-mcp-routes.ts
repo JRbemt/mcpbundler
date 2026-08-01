@@ -156,6 +156,18 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
     } else if (!sessionId && isInitialize) {
       // New session - authenticate and create transport
 
+      // Reject new sessions while draining (see BundlerServer.shutdown) -
+      // existing sessions above are unaffected and keep running until they
+      // end naturally or the drain timeout force-closes them.
+      if (bundler.isDraining()) {
+        res.status(503).json({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Server is shutting down, please retry against another instance" },
+          id: req.body?.id || null
+        });
+        return;
+      }
+
       // Reject connections during startup grace period
       if (Date.now() - bundler.getServerStartTime() < startupGracePeriodMs) {
         logger.warn({ userAgent: ua, ip }, "Rejecting connection during startup grace period");
@@ -229,7 +241,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
           const strategy = (bundler.getConfig().loading_strategy ?? "progressive") as LoadingStrategy;
 
           // Create session with full bundle catalog so middleware can inspect it
-          const session = bundler.createSession(sessionId, bundleConfig.bundleId, bundleConfig.upstreams);
+          const session = bundler.createSession(sessionId, bundleConfig.bundleId, token, bundleConfig.upstreams);
           session.setLoadingStrategy(strategy);
 
           // Wire session list-changed events to MCP server notifications so the
@@ -509,6 +521,22 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
 
     logger.info({ sessionId, middleware: name }, "Middleware removed via API");
     res.json({ sessionId, middleware: name, status: "removed" });
+  });
+
+  /**
+   * Kubernetes readiness probe - deliberately separate from /status. Liveness
+   * must stay healthy while draining (the process is fine, just intentionally
+   * not accepting new work), but readiness should fail so the Service/Ingress
+   * stops routing NEW connections here as early as possible - a defense-in-
+   * depth signal alongside Kubernetes' own automatic exclusion of Terminating
+   * pods from Endpoints.
+   */
+  router.get("/ready", async (_req: Request, res: Response) => {
+    if (bundler.isDraining()) {
+      res.status(503).json({ ready: false, draining: true });
+      return;
+    }
+    res.status(200).json({ ready: true });
   });
 
   /**

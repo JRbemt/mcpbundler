@@ -12,7 +12,7 @@ import { McpPermissions } from "../../../shared/domain/entities.js";
 type ResolvedMcp = {
     namespace: string;
     url: string;
-    stateless: boolean;
+    pooled: boolean;
     authStrategy: "MASTER" | "USER_SET" | "NONE";
     auth?: MCPAuthConfig;
     description?: string;
@@ -38,7 +38,7 @@ function resolveEntry(entry: YamlBundleMcpEntry, definitions: YamlDefinitions): 
         return {
             namespace: def.namespace,
             url: def.url,
-            stateless: def.stateless,
+            pooled: def.pooled,
             authStrategy: entry.auth_strategy,
             auth: def.auth,
             description: def.description,
@@ -54,7 +54,7 @@ function resolveEntry(entry: YamlBundleMcpEntry, definitions: YamlDefinitions): 
     return {
         namespace: entry.namespace,
         url: entry.url,
-        stateless: entry.stateless,
+        pooled: entry.pooled,
         authStrategy: entry.auth_strategy,
         auth: entry.auth,
         description: entry.description,
@@ -116,7 +116,7 @@ export class YamlBundleResolver implements ResolverService {
             upstreams.push({
                 namespace: resolved.namespace,
                 url: resolved.url,
-                pooled: resolved.stateless,
+                pooled: resolved.pooled,
                 authStrategy: resolved.authStrategy,
                 auth,
                 description: resolved.description,

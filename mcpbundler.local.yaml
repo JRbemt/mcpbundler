@@ -22,21 +22,21 @@ definitions:
     - namespace: fetch
       url: "https://fetch.mcp.example.com/mcp"
       description: "HTTP fetch and web scraping"
-      stateless: true
+      pooled: true
       auth:
         method: none
 
     - namespace: filesystem
       url: "http://host.docker.internal:3001/mcp"
       description: "Local filesystem read/write"
-      stateless: false
+      pooled: false
       auth:
         method: none
 
     - namespace: github
       url: "https://github-mcp.example.com/mcp"
       description: "GitHub - PRs, issues, code search"
-      stateless: true
+      pooled: true
       auth:
         method: bearer
         token: "${GITHUB_TOKEN}"

@@ -85,6 +85,7 @@ interface DomainEvent {
 export class Session extends EventEmitter {
     readonly id: string;
     readonly bundleId: string;
+    readonly accessToken: string;
     readonly createdAt: Date;
     private namespaceService: INamespaceService | null;
     private permissionService: IPermissionService | null;
@@ -109,6 +110,7 @@ export class Session extends EventEmitter {
     constructor(
         id: string,
         bundleId: string,
+        accessToken: string,
         createdAt: Date,
         namespaceService: INamespaceService | null,
         permissionService: IPermissionService | null,
@@ -121,6 +123,7 @@ export class Session extends EventEmitter {
         super();
         this.id = id;
         this.bundleId = bundleId;
+        this.accessToken = accessToken;
         this.createdAt = createdAt;
         this.namespaceService = namespaceService;
         this.permissionService = permissionService;
@@ -258,6 +261,7 @@ export class Session extends EventEmitter {
     static create(
         id: string,
         bundleId: string,
+        accessToken: string,
         namespaceService: INamespaceService,
         permissionService: IPermissionService,
         connectorFactory: IConnectorFactory,
@@ -265,7 +269,7 @@ export class Session extends EventEmitter {
         stateStore: SessionStateStore
     ): Session {
         const now = new Date();
-        const session = new Session(id, bundleId, now, namespaceService, permissionService, connectorFactory, connectionPool, now, SessionState.Active, stateStore);
+        const session = new Session(id, bundleId, accessToken, now, namespaceService, permissionService, connectorFactory, connectionPool, now, SessionState.Active, stateStore);
         session.addDomainEvent(createSessionEstablished(id, bundleId));
         return session;
     }
