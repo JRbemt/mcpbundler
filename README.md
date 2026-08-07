@@ -73,7 +73,7 @@ The bundler delegates bundle resolution to an external backend (the MCP Market F
 BACKEND_URL=https://api.example.com node dist/src/main.js
 ```
 
-When a token arrives, the bundler calls `GET $BACKEND_URL/api/v1/bundler/resolve` with the token forwarded as the Authorization header. The backend returns the resolved bundle. No local config is needed.
+When a token arrives, the bundler calls `GET $BACKEND_URL/v1/bundler/resolve` with the token forwarded as the Authorization header. The backend returns the resolved bundle. No local config is needed.
 
 ---
 

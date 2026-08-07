@@ -730,6 +730,10 @@ export class Session extends EventEmitter {
             this.addDomainEvent(createUpstreamDisconnected(this.id, namespace, reason));
         }
         this.upstreams.clear();
+        // Purge this session's bucket (resumption tokens, LLM-router decision
+        // state) so InMemorySessionStateStore doesn't accumulate one entry
+        // per session for the lifetime of the process.
+        await this.stateStore.delete(this.id);
         // Emit shutdown event for listeners
         this.emit(SESSION_EVENTS.SHUTDOWN);
     }

@@ -31,6 +31,7 @@ import logger from "../../shared/utils/logger.js";
 import { getPrometheusMetrics } from "../utils/metrics.js";
 import { register } from "prom-client";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { Bundle } from "../core/schemas.js";
 
 /**
  * Transport metadata for session tracking
@@ -109,6 +110,100 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
     }
 
     logger.debug({ sessionId }, "Session cleaned up");
+  }
+
+  /**
+   * Wire up a session's domain object, middleware, and upstream connections
+   * for a resolved bundle, and register it with the bundler and transport
+   * registries.
+   *
+   * Deliberately independent of how sessionId/bundleConfig/token were
+   * obtained - today's only caller is the StreamableHTTP initialize
+   * handshake (onsessioninitialized below), but the MCP spec revision that
+   * drops the handshake and Mcp-Session-Id header (see session-identity.ts)
+   * will need to establish sessions from an explicit handle instead. That
+   * path can call this same function without duplicating the bootstrap
+   * sequence.
+   */
+  async function bootstrapSession(
+    sessionId: string,
+    bundleConfig: Bundle,
+    token: string,
+    transport: StreamableHTTPServerTransport,
+    mcpServer: Server
+  ): Promise<void> {
+    const strategy = (bundler.getConfig().loading_strategy ?? "progressive") as LoadingStrategy;
+
+    // Create session with full bundle catalog so middleware can inspect it
+    const session = bundler.createSession(sessionId, bundleConfig.bundleId, token, bundleConfig.upstreams);
+    session.setLoadingStrategy(strategy);
+
+    // Wire session list-changed events to MCP server notifications so the
+    // downstream agent receives notifications/tools/list_changed etc.
+    session.on(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, () => {
+      mcpServer.sendToolListChanged().catch((err: Error) =>
+        logger.warn({ sessionId, err: err.message }, "Failed to send tools/list_changed notification")
+      );
+    });
+    session.on(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, () => {
+      mcpServer.sendResourceListChanged().catch((err: Error) =>
+        logger.warn({ sessionId, err: err.message }, "Failed to send resources/list_changed notification")
+      );
+    });
+    session.on(SESSION_EVENTS.NOTIFY_PROMPTS_CHANGED, () => {
+      mcpServer.sendPromptListChanged().catch((err: Error) =>
+        logger.warn({ sessionId, err: err.message }, "Failed to send prompts/list_changed notification")
+      );
+    });
+
+    // Install LLM tool router if the bundle carries router config with at least one signal enabled.
+    // Must be called before addSession so the session is passed directly.
+    if (bundleConfig.router) {
+      bundler.installRouterMiddleware(session, bundleConfig.router);
+    }
+
+    // Store session before attaching upstreams so MCP handlers can reach it
+    bundler.addSession(sessionId, session);
+
+    const setContextEnabled = bundleConfig.router?.set_context?.enabled ?? false;
+
+    if (setContextEnabled) {
+      // set_context is enabled: the LLM ranks namespaces before any upstream connects.
+      // Nothing loads here — the router middleware drives attachment after the agent
+      // calls bundler__set_context with a task description.
+      logger.debug({ sessionId, strategy }, "set_context enabled: upstream selection deferred to LLM router");
+    } else if (strategy === LoadingStrategy.EAGER) {
+      // Block until all upstreams are connected, then emit once so the client
+      // receives a complete tool list on its very first tools/list request.
+      await bundler.attachUpstreamsAsync(session, bundleConfig.upstreams);
+      session.emitListChanged();
+      logger.debug({ sessionId, strategy }, "All upstreams attached (eager)");
+    } else {
+      // PROGRESSIVE: respond immediately; client receives list_changed
+      // notifications as each upstream comes online.
+      bundler.attachUpstreamsAsync(session, bundleConfig.upstreams)
+        .then(() => logger.debug({ sessionId, strategy }, "All upstreams attached (progressive)"))
+        .catch((err: Error) => logger.error({ sessionId, err: err.message }, "Upstream attach error"));
+    }
+
+    // Start idle monitoring for automatic cleanup
+    session.startIdleMonitoring();
+
+    // Handle session shutdown (triggered by idle timeout or manual close)
+    session.on(SESSION_EVENTS.SHUTDOWN, () => {
+      logger.info({ sessionId }, "Session shutdown event, cleaning up");
+      cleanupSession(sessionId);
+    });
+
+    // Store transport metadata (mcpServer kept for runtime middleware access)
+    transportMeta.set(sessionId, {
+      transport,
+      mcpServer,
+      bundleId: bundleConfig.bundleId,
+      createdAt: Date.now()
+    });
+
+    logger.info({ sessionId, bundleId: bundleConfig.bundleId, strategy }, "MCP session initialized");
   }
 
   /**
@@ -238,78 +333,7 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         sessionIdGenerator: () => sessionIdentity.issue(),
         enableJsonResponse: true,
         onsessioninitialized: async (sessionId) => {
-          const strategy = (bundler.getConfig().loading_strategy ?? "progressive") as LoadingStrategy;
-
-          // Create session with full bundle catalog so middleware can inspect it
-          const session = bundler.createSession(sessionId, bundleConfig.bundleId, token, bundleConfig.upstreams);
-          session.setLoadingStrategy(strategy);
-
-          // Wire session list-changed events to MCP server notifications so the
-          // downstream agent receives notifications/tools/list_changed etc.
-          session.on(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, () => {
-            mcpServer.sendToolListChanged().catch((err: Error) =>
-              logger.warn({ sessionId, err: err.message }, "Failed to send tools/list_changed notification")
-            );
-          });
-          session.on(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, () => {
-            mcpServer.sendResourceListChanged().catch((err: Error) =>
-              logger.warn({ sessionId, err: err.message }, "Failed to send resources/list_changed notification")
-            );
-          });
-          session.on(SESSION_EVENTS.NOTIFY_PROMPTS_CHANGED, () => {
-            mcpServer.sendPromptListChanged().catch((err: Error) =>
-              logger.warn({ sessionId, err: err.message }, "Failed to send prompts/list_changed notification")
-            );
-          });
-
-          // Install LLM tool router if the bundle carries router config with at least one signal enabled.
-          // Must be called before addSession so the session is passed directly.
-          if (bundleConfig.router) {
-            bundler.installRouterMiddleware(session, bundleConfig.router);
-          }
-
-          // Store session before attaching upstreams so MCP handlers can reach it
-          bundler.addSession(sessionId, session);
-
-          const setContextEnabled = bundleConfig.router?.set_context?.enabled ?? false;
-
-          if (setContextEnabled) {
-            // set_context is enabled: the LLM ranks namespaces before any upstream connects.
-            // Nothing loads here — the router middleware drives attachment after the agent
-            // calls bundler__set_context with a task description.
-            logger.debug({ sessionId, strategy }, "set_context enabled: upstream selection deferred to LLM router");
-          } else if (strategy === LoadingStrategy.EAGER) {
-            // Block until all upstreams are connected, then emit once so the client
-            // receives a complete tool list on its very first tools/list request.
-            await bundler.attachUpstreamsAsync(session, bundleConfig.upstreams);
-            session.emitListChanged();
-            logger.debug({ sessionId, strategy }, "All upstreams attached (eager)");
-          } else {
-            // PROGRESSIVE: respond immediately; client receives list_changed
-            // notifications as each upstream comes online.
-            bundler.attachUpstreamsAsync(session, bundleConfig.upstreams)
-              .then(() => logger.debug({ sessionId, strategy }, "All upstreams attached (progressive)"))
-              .catch((err: Error) => logger.error({ sessionId, err: err.message }, "Upstream attach error"));
-          }
-
-          // Start idle monitoring for automatic cleanup
-          session.startIdleMonitoring();
-
-          // Handle session shutdown (triggered by idle timeout or manual close)
-          session.on(SESSION_EVENTS.SHUTDOWN, () => {
-            logger.info({ sessionId }, "Session shutdown event, cleaning up");
-            cleanupSession(sessionId);
-          });
-
-          // Store transport metadata (mcpServer kept for runtime middleware access)
-          transportMeta.set(sessionId, {
-            transport,
-            mcpServer,
-            bundleId: bundleConfig.bundleId,
-            createdAt: Date.now()
-          });
-
-          logger.info({ sessionId, bundleId: bundleConfig.bundleId, strategy }, "MCP session initialized");
+          await bootstrapSession(sessionId, bundleConfig, token, transport, mcpServer);
         },
         onsessionclosed: (sessionId) => {
           logger.info({ sessionId }, "MCP session closed via transport");
