@@ -31,6 +31,7 @@ Add the MCP to the bundle. All 5 agents already pointing at that bundle endpoint
   - [subscriptions](#subscriptions)
   - [Auth Strategies](#auth-strategies)
   - [LLM Tool Router](#llm-tool-router)
+- [Loading Strategy](#loading-strategy)
 - [Connecting a Client](#connecting-a-client)
 - [Running](#running)
 - [Metrics](#metrics)
@@ -231,6 +232,26 @@ router:
 Set `model: allpass` (or omit `router`) to disable routing and connect all upstreams unconditionally.
 
 `capabilities` on each MCP definition contributes to routing accuracy. The router builds a selection prompt listing every MCP in the bundle with its namespace, description, capabilities, and known tool names.
+
+---
+
+## Loading Strategy
+
+Controls when a session's upstream MCPs are connected:
+
+| Strategy | Behavior |
+|----------|----------|
+| `eager` (default) | All of the bundle's upstreams are connected before the session finishes initializing. |
+| `progressive` | The session initializes immediately; upstreams connect in the background as they become available. |
+
+The server-wide default comes from the `loading_strategy` bundler setting. A running session's strategy can also be switched at runtime:
+
+```
+PUT /mcp/strategy
+{ "strategy": "eager" | "progressive" }
+```
+
+This only affects future upstream-attach calls on that session (for example, when the LLM tool router activates a namespace that was not connected yet).
 
 ---
 
