@@ -33,6 +33,7 @@ Add the MCP to the bundle. All 5 agents already pointing at that bundle endpoint
   - [LLM Tool Router](#llm-tool-router)
 - [Loading Strategy](#loading-strategy)
 - [Connecting a Client](#connecting-a-client)
+- [Anonymous Discovery and Connection](#anonymous-discovery-and-connection)
 - [Running](#running)
 - [Metrics](#metrics)
 - [Contributing](#contributing)
@@ -279,6 +280,36 @@ Pass your subscription token as a bearer token:
 ```
 
 A legacy SSE transport is also available at `GET /sse` + `POST /messages` for clients that do not support StreamableHTTP.
+
+---
+
+## Anonymous Discovery and Connection
+
+API mode also supports connecting with no bearer token at all, so an agent can discover and connect to a bundle without a human first issuing it a token out of band. This requires `BACKEND_URL` (API mode only - there is no anonymous path in YAML mode) plus a client-credentials Keycloak client, distinct from any per-user client, that the backend recognizes as a legitimate anonymous caller (`KEYCLOAK_SERVER_URL`, `KEYCLOAK_REALM`, `BUNDLER_ANON_KEYCLOAK_CLIENT_ID`, `BUNDLER_ANON_KEYCLOAK_CLIENT_SECRET`).
+
+A no-token `POST /mcp` gets a minimal session exposing two read-only tools backed by the backend's public catalog:
+
+- `bundler__search_bundles` - search the bundle catalog
+- `bundler__get_bundle` - fetch a specific bundle's details
+
+From there, two connection paths get an agent from that anonymous session into a real, authenticated bundle session, same session ID and transport throughout:
+
+**Device-flow tools** (any MCP client, including ones with no OAuth support at all) - gated behind `BUNDLER_DEVICE_FLOW_ENABLED=true` and `BUNDLER_DEVICEFLOW_KEYCLOAK_CLIENT_ID`/`_SECRET`:
+
+- `bundler__start_connection(bundle_id)` requests a Keycloak device code (RFC 8628) and returns a `user_code`/`verification_uri` for the agent to relay to a human
+- `bundler__check_connection_status()` polls until the human approves, then transitions the session onto the target bundle's real upstreams
+
+This flag defaults to off: `verification_uri` currently points at Keycloak's own generic device-approval page, which cannot tell a human which agent or bundle they are authorizing. Do not enable it for production traffic until a bundle-aware consent page replaces that page.
+
+**Native OAuth 2.1 discovery** (spec-compliant clients that implement MCP's own authorization flow) - gated behind `BUNDLER_NATIVE_OAUTH_ENABLED=true` and `BUNDLER_PUBLIC_URL`:
+
+- `POST/GET/DELETE /mcp/:bundleId` are bundle-scoped aliases of the bare `/mcp` routes
+- A tokenless request to one gets a `401` with `WWW-Authenticate: Bearer resource_metadata="..."` pointing at `GET /.well-known/oauth-protected-resource/mcp/:bundleId` (RFC 9728), which drives the client's own browser-redirect + PKCE flow against Keycloak
+- A resulting Keycloak JWT is forwarded (not parsed or validated) to the backend's deployment bootstrap endpoint to mint a real bundle session
+
+This flag also defaults to off: the backend does not yet reject a JWT whose `aud`/`resource` claim doesn't match the bundle it's being redeemed for, so the per-bundle resource-URI is not yet enforced end to end.
+
+A session's loading strategy, `BUNDLER_TOKEN_BILLING_ENABLED`, gates a per-call token spend-check middleware against a ledger service. It also defaults to off - enabling it before a subscription has a way to receive a positive token balance makes every tool call fail with "Insufficient token balance."
 
 ---
 
