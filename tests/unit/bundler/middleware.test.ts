@@ -11,6 +11,7 @@ function makeCtx(): MiddlewareContext {
   return {
     sessionId: "sess-1",
     bundleId: "bundle-1",
+    accessToken: "test-token",
     notifyToolsChanged: vi.fn(),
     notifyResourcesChanged: vi.fn(),
     notifyPromptsChanged: vi.fn(),

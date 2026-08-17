@@ -26,12 +26,28 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { BundlerServer } from "../core/bundler.js";
 import { SESSION_EVENTS } from "../core/session/session.js";
 import { LoadingStrategy } from "../core/session/loading/loading-strategy.js";
+import { attachStageUpstreams } from "../core/session/loading/attach-stage-upstreams.js";
 import { SessionIdentityResolver, TransportHeaderSessionIdentity } from "../core/session/session-identity.js";
+import { protectedResourceMetadataUrl } from "../core/oauth/resource-identifiers.js";
+import { looksLikeKeycloakJwt } from "../core/oauth/jwt-shape.js";
 import logger from "../../shared/utils/logger.js";
 import { getPrometheusMetrics } from "../utils/metrics.js";
 import { register } from "prom-client";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { Bundle } from "../core/schemas.js";
+
+// Names that must never be removable or replaceable through the runtime
+// middleware-management API below - both routes authorize on nothing
+// stronger than "a session with this id exists," so anything with real
+// security or billing consequences has to be excluded here rather than
+// relying on that check alone. token-spend-check being removable would
+// let any bundle-token holder use a paid bundle for free; anonymous-rate-limit
+// being removable would remove the only cap on unauthenticated Keycloak
+// device-code minting.
+export const PROTECTED_MIDDLEWARE_NAMES: ReadonlySet<string> = new Set([
+  "token-spend-check",
+  "anonymous-rate-limit",
+]);
 
 /**
  * Transport metadata for session tracking
@@ -162,6 +178,14 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       bundler.installRouterMiddleware(session, bundleConfig.router);
     }
 
+    // Every bundle session attempts to bill token usage - unlike the
+    // router above, this call is never gated on bundle config (a bundle
+    // always requires a deployment, and therefore token spend). Whether it
+    // actually installs anything is decided inside installSpendCheckMiddleware
+    // itself, via BUNDLER_TOKEN_BILLING_ENABLED - see its own docstring.
+    // Also called before addSession for the same reason as the router above.
+    bundler.installSpendCheckMiddleware(session);
+
     // Store session before attaching upstreams so MCP handlers can reach it
     bundler.addSession(sessionId, session);
 
@@ -172,18 +196,13 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       // Nothing loads here — the router middleware drives attachment after the agent
       // calls bundler__set_context with a task description.
       logger.debug({ sessionId, strategy }, "set_context enabled: upstream selection deferred to LLM router");
-    } else if (strategy === LoadingStrategy.EAGER) {
-      // Block until all upstreams are connected, then emit once so the client
-      // receives a complete tool list on its very first tools/list request.
-      await bundler.attachUpstreamsAsync(session, bundleConfig.upstreams);
-      session.emitListChanged();
-      logger.debug({ sessionId, strategy }, "All upstreams attached (eager)");
     } else {
-      // PROGRESSIVE: respond immediately; client receives list_changed
-      // notifications as each upstream comes online.
-      bundler.attachUpstreamsAsync(session, bundleConfig.upstreams)
-        .then(() => logger.debug({ sessionId, strategy }, "All upstreams attached (progressive)"))
-        .catch((err: Error) => logger.error({ sessionId, err: err.message }, "Upstream attach error"));
+      // EAGER blocks until every upstream is attached and emits once;
+      // PROGRESSIVE returns immediately and relies on each upstream's own
+      // attach call to notify the client as it comes online - see
+      // attachStageUpstreams for the shared branching logic (also used by
+      // Session.transitionTo for mid-session stage changes).
+      await attachStageUpstreams(session, bundleConfig.upstreams, strategy);
     }
 
     // Start idle monitoring for automatic cleanup
@@ -207,12 +226,63 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
   }
 
   /**
-   * Handle POST /mcp - Main message handler
+   * Create a StreamableHTTP transport, wire its lifecycle callbacks, create
+   * and connect an MCP Server to it, and hand off the initialize request.
+   * Shared by both the authenticated and anonymous initialize paths so the
+   * transport plumbing exists in exactly one place.
    */
-  router.post("/mcp", mcpLimiter, async (req: Request, res: Response) => {
+  async function connectNewTransport(
+    req: Request,
+    res: Response,
+    onSessionReady: (sessionId: string, transport: StreamableHTTPServerTransport, mcpServer: Server) => Promise<void>
+  ): Promise<void> {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => sessionIdentity.issue(),
+      enableJsonResponse: true,
+      onsessioninitialized: async (sessionId) => {
+        await onSessionReady(sessionId, transport, mcpServer);
+      },
+      onsessionclosed: (sessionId) => {
+        logger.info({ sessionId }, "MCP session closed via transport");
+        cleanupSession(sessionId);
+      }
+    });
+
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        logger.info({ sessionId: transport.sessionId }, "Transport closed");
+        cleanupSession(transport.sessionId);
+      }
+    };
+
+    transport.onerror = (error: Error) => {
+      if (error.name === "AbortError") {
+        logger.debug({ sessionId: transport.sessionId }, "Transport aborted (expected during disconnect)");
+      } else {
+        logger.error({ sessionId: transport.sessionId, error: error.message }, "Transport error");
+      }
+    };
+
+    const mcpServer = bundler.createMCPServer();
+    await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+
+    if (transport.sessionId) {
+      logger.info({ sessionId: transport.sessionId }, "New MCP session established");
+    }
+  }
+
+  /**
+   * Handle POST /mcp - Main message handler. Shared by the bare /mcp path
+   * and the bundle-scoped /mcp/:bundleId variant registered further down -
+   * bundleIdHint is undefined on the bare path (no :bundleId param exists
+   * there) and only shapes the no-token branch below.
+   */
+  async function handleMcpPost(req: Request, res: Response): Promise<void> {
     const ua = req.headers["user-agent"];
     const ip = req.ip || req.socket.remoteAddress;
     const sessionId = sessionIdentity.resolve(req);
+    const bundleIdHint = (req.params as Record<string, string | undefined>).bundleId;
     const config = bundler.getConfig();
 
     // Validate Accept header
@@ -286,93 +356,166 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         return;
       }
 
-      // Extract and validate bearer token
+      // A bearer token attempts to resolve to a specific bundle regardless
+      // of which path triggered this handler. No token on the bare /mcp
+      // path means the agent hasn't authenticated yet and gets the
+      // anonymous discovery session (subject to the discoveryBackendUrl
+      // gate below) instead of a 401 - see the design doc's "Anonymous
+      // agent connections" section for why this is safe (no upstream
+      // access, no billing implication). No token on a bundle-scoped
+      // resource URI (/mcp/<bundle_id>) means something specific WAS
+      // requested, so there is something to authorize for - trigger RFC
+      // 9728 discovery instead, regardless of whether anonymous discovery
+      // is available (design doc, "Triggering the flow: per-bundle
+      // resource URIs").
       const token = extractBearerToken(req);
-      if (!token) {
-        logger.warn({ userAgent: ua, ip }, "Missing or invalid Authorization header");
+
+      if (token) {
+        // A JWT-shaped token on a bundle-scoped path is what a
+        // spec-compliant OAuth client presents after completing the
+        // browser-redirect flow against this bundle's resource URI (see
+        // the previous request's 401 + Protected Resource Metadata
+        // response). It is never used as-is: the bundler exchanges it for
+        // a real bundle access token via the backend, then proceeds
+        // exactly as the plain-bundle-token path below already does. An
+        // opaque, non-JWT-shaped token - on either path - is assumed to
+        // already be a bundle token and goes straight to resolveBundle,
+        // unchanged from before this plan.
+        let effectiveToken = token;
+
+        if (bundleIdHint && looksLikeKeycloakJwt(token)) {
+          logger.info(
+            { bundleId: bundleIdHint, userAgent: ua, ip },
+            "Exchanging Keycloak JWT for a bundle access token"
+          );
+          const bootstrapResult = await bundler.getDeploymentBootstrapClient().bootstrap(token, bundleIdHint);
+          if (!bootstrapResult) {
+            logger.warn(
+              { bundleId: bundleIdHint, userAgent: ua, ip },
+              "Deployment bootstrap exchange failed"
+            );
+            res
+              .status(401)
+              .set(
+                "WWW-Authenticate",
+                `Bearer error="invalid_token", error_description="Could not exchange authorization for a bundle token", resource_metadata="${protectedResourceMetadataUrl(bundleIdHint)}"`
+              )
+              .json({
+                jsonrpc: "2.0",
+                error: { code: -32000, message: "Unauthorized: could not exchange authorization for a bundle token" },
+                id: req.body?.id || null
+              });
+            return;
+          }
+          // A "needs_credentials" result still carries a usable token - the
+          // deployment's resolver skips only the entries still missing a
+          // credential. Proceed with resolveBundle either way rather than
+          // blocking the whole session on one entry.
+          effectiveToken = bootstrapResult.token;
+        }
+
+        let bundleConfig;
+        try {
+          bundleConfig = await bundler.getBundleResolver().resolveBundle(effectiveToken);
+          logger.info({
+            bundleId: bundleConfig.bundleId,
+            bundleName: bundleConfig.name,
+            upstreamCount: bundleConfig.upstreams.length,
+            userAgent: ua,
+            ip
+          }, "Successfully resolved bundle from token");
+        } catch (error: any) {
+          const status = error.status || 401;
+          const message = error.message || "Bundle resolution failed";
+
+          logger.error({
+            error: message,
+            status,
+            userAgent: ua,
+            ip
+          }, "Failed to resolve bundle from token");
+
+          res.status(status).json({
+            jsonrpc: "2.0",
+            error: { code: -32000, message },
+            id: req.body?.id || null
+          });
+          return;
+        }
+
+        await connectNewTransport(req, res, (sessionId, transport, mcpServer) =>
+          bootstrapSession(sessionId, bundleConfig, effectiveToken, transport, mcpServer)
+        );
+      } else if (bundleIdHint) {
+        const metadataUrl = protectedResourceMetadataUrl(bundleIdHint);
+        logger.info(
+          { bundleId: bundleIdHint, userAgent: ua, ip },
+          "No token on bundle-scoped resource URI; returning 401 with Protected Resource Metadata for OAuth discovery"
+        );
+        res
+          .status(401)
+          .set("WWW-Authenticate", `Bearer resource_metadata="${metadataUrl}"`)
+          .json({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Unauthorized: this bundle requires OAuth authorization" },
+            id: req.body?.id || null
+          });
+        return;
+      } else if (bundler.getDiscoveryBackendUrl()) {
+        logger.info({ userAgent: ua, ip }, "Starting anonymous discovery session");
+        await connectNewTransport(req, res, async (sessionId, transport, mcpServer) => {
+          const session = bundler.createAnonymousSession(sessionId);
+          bundler.addSession(sessionId, session);
+
+          // Wire session list-changed events to MCP server notifications, same
+          // as bootstrapSession - kept identical so this session can transition
+          // onto a real bundle in place in a later phase without divergent
+          // wiring between the two paths.
+          session.on(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, () => {
+            mcpServer.sendToolListChanged().catch((err: Error) =>
+              logger.warn({ sessionId, err: err.message }, "Failed to send tools/list_changed notification")
+            );
+          });
+          session.on(SESSION_EVENTS.NOTIFY_RESOURCES_CHANGED, () => {
+            mcpServer.sendResourceListChanged().catch((err: Error) =>
+              logger.warn({ sessionId, err: err.message }, "Failed to send resources/list_changed notification")
+            );
+          });
+          session.on(SESSION_EVENTS.NOTIFY_PROMPTS_CHANGED, () => {
+            mcpServer.sendPromptListChanged().catch((err: Error) =>
+              logger.warn({ sessionId, err: err.message }, "Failed to send prompts/list_changed notification")
+            );
+          });
+
+          // Start idle monitoring for automatic cleanup
+          session.startIdleMonitoring();
+
+          // Handle session shutdown (triggered by idle timeout or manual close) -
+          // without this listener an idle anonymous session never reaches
+          // cleanupSession, so its transport never closes and its slot never frees.
+          session.on(SESSION_EVENTS.SHUTDOWN, () => {
+            logger.info({ sessionId }, "Session shutdown event, cleaning up");
+            cleanupSession(sessionId);
+          });
+
+          // Every subsequent request on this session (tools/list, tools/call,
+          // even DELETE to close it) is routed by looking sessionId up in
+          // transportMeta, not by bundler.getSession alone - the token branch
+          // above registers it inside bootstrapSession; this branch must do
+          // the same or every request after this one 404s.
+          transportMeta.set(sessionId, { transport, mcpServer, bundleId: "anonymous", createdAt: Date.now() });
+          logger.info({ sessionId }, "Anonymous MCP session initialized");
+        });
+      } else {
+        // No discovery backend configured (self-hosted/YAML-only deployment) -
+        // the anonymous session would only ever answer "no bundles found", so
+        // preserve the pre-anonymous-discovery contract: 401, no session minted.
+        logger.warn({ userAgent: ua, ip }, "Rejecting anonymous session: no discovery backend configured");
         res.status(401).json({
           jsonrpc: "2.0",
-          error: { code: -32000, message: "Unauthorized: Bearer token required" },
+          error: { code: -32000, message: "Authentication required" },
           id: req.body?.id || null
         });
-        return;
-      }
-
-      // Resolve bundle from token
-      let bundleConfig;
-      try {
-        bundleConfig = await bundler.getBundleResolver().resolveBundle(token);
-        logger.info({
-          bundleId: bundleConfig.bundleId,
-          bundleName: bundleConfig.name,
-          upstreamCount: bundleConfig.upstreams.length,
-          userAgent: ua,
-          ip
-        }, "Successfully resolved bundle from token");
-      } catch (error: any) {
-        const status = error.status || 401;
-        const message = error.message || "Bundle resolution failed";
-
-        logger.error({
-          error: message,
-          status,
-          userAgent: ua,
-          ip
-        }, "Failed to resolve bundle from token");
-
-        res.status(status).json({
-          jsonrpc: "2.0",
-          error: { code: -32000, message },
-          id: req.body?.id || null
-        });
-        return;
-      }
-
-      // Create StreamableHTTP transport with session initialization callback
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => sessionIdentity.issue(),
-        enableJsonResponse: true,
-        onsessioninitialized: async (sessionId) => {
-          await bootstrapSession(sessionId, bundleConfig, token, transport, mcpServer);
-        },
-        onsessionclosed: (sessionId) => {
-          logger.info({ sessionId }, "MCP session closed via transport");
-          cleanupSession(sessionId);
-        }
-      });
-
-      // Handle transport close
-      transport.onclose = () => {
-        if (transport.sessionId) {
-          logger.info({ sessionId: transport.sessionId }, "Transport closed");
-          cleanupSession(transport.sessionId);
-        }
-      };
-
-      // Handle transport errors (AbortError during disconnect is expected)
-      transport.onerror = (error: Error) => {
-        if (error.name === "AbortError") {
-          logger.debug({ sessionId: transport.sessionId }, "Transport aborted (expected during disconnect)");
-        } else {
-          logger.error({ sessionId: transport.sessionId, error: error.message }, "Transport error");
-        }
-      };
-
-      // Create a dedicated MCP Server for this session and connect it to the transport.
-      // The SDK enforces a 1:1 Server-to-Transport relationship.
-      const mcpServer = bundler.createMCPServer();
-      await mcpServer.connect(transport);
-
-      // Handle the initialize request - this triggers onsessioninitialized
-      await transport.handleRequest(req, res, req.body);
-
-      if (transport.sessionId) {
-        logger.info({
-          sessionId: transport.sessionId,
-          bundleId: bundleConfig.bundleId,
-          userAgent: ua,
-          ip
-        }, "New MCP session established");
       }
     } else if (sessionId && !transportMeta.has(sessionId)) {
       // Session ID provided but session doesn't exist (expired or invalid)
@@ -390,12 +533,17 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         id: req.body?.id || null
       });
     }
-  });
+  }
+
+  router.post("/mcp", mcpLimiter, handleMcpPost);
 
   /**
-   * Handle GET /mcp - SSE stream for server-initiated messages
+   * Handle GET /mcp - SSE stream for server-initiated messages. Shared by
+   * the bare /mcp path and the bundle-scoped /mcp/:bundleId variant - an
+   * already-established session is looked up by its Mcp-Session-Id header
+   * regardless of which path a request arrives on.
    */
-  router.get("/mcp", mcpLimiter, async (req: Request, res: Response) => {
+  async function handleMcpGet(req: Request, res: Response): Promise<void> {
     const sessionId = sessionIdentity.resolve(req) as string;
     const meta = transportMeta.get(sessionId);
 
@@ -422,12 +570,16 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         });
       }
     }
-  });
+  }
+
+  router.get("/mcp", mcpLimiter, handleMcpGet);
 
   /**
-   * Handle DELETE /mcp - Session termination
+   * Handle DELETE /mcp - Session termination. Shared by the bare /mcp path
+   * and the bundle-scoped /mcp/:bundleId variant, same rationale as
+   * handleMcpGet above.
    */
-  router.delete("/mcp", mcpLimiter, async (req: Request, res: Response) => {
+  async function handleMcpDelete(req: Request, res: Response): Promise<void> {
     const sessionId = sessionIdentity.resolve(req) as string;
     const meta = transportMeta.get(sessionId);
 
@@ -450,7 +602,9 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
         res.status(200).end();
       }
     }
-  });
+  }
+
+  router.delete("/mcp", mcpLimiter, handleMcpDelete);
 
   /**
    * Switch the loading strategy on an active session at runtime.
@@ -499,6 +653,11 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
       return;
     }
 
+    if (PROTECTED_MIDDLEWARE_NAMES.has(name)) {
+      res.status(403).json({ error: `Middleware "${name}" is protected and cannot be installed through this API` });
+      return;
+    }
+
     const session = bundler.getSession(sessionId);
     if (!session) {
       res.status(404).json({ error: "Session not found in bundler" });
@@ -537,7 +696,12 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
     }
 
     const name = req.params.name as string;
-    const removed = bundler.removeMiddlewareFromSession(sessionId, name);
+    if (PROTECTED_MIDDLEWARE_NAMES.has(name)) {
+      res.status(403).json({ error: `Middleware "${name}" is protected and cannot be removed through this API` });
+      return;
+    }
+
+    const removed = await bundler.removeMiddlewareFromSession(sessionId, name);
     if (!removed) {
       res.status(404).json({ error: `Middleware "${name}" not found on this session` });
       return;
@@ -546,6 +710,31 @@ export function createMcpRoutes(bundler: BundlerServer): Router {
     logger.info({ sessionId, middleware: name }, "Middleware removed via API");
     res.json({ sessionId, middleware: name, status: "removed" });
   });
+
+  // Per-bundle resource URI variants of the three /mcp verbs above. Their
+  // only purpose is to make the OAuth authorization dance bundle-scoped
+  // (see handleMcpPost's bundleIdHint branch); an already-established
+  // session is looked up by its Mcp-Session-Id header regardless of which
+  // path a request arrives on, so GET/DELETE behave identically here to
+  // their bare-/mcp counterparts. Must be registered after the literal
+  // /mcp/middleware and /mcp/middleware/:name routes above: Express
+  // matches routes in registration order, and :bundleId would otherwise
+  // capture a POST /mcp/middleware request as bundleId="middleware"
+  // before it reached the real middleware-install route.
+  //
+  // Gated behind BUNDLER_NATIVE_OAUTH_ENABLED, the same pattern
+  // BUNDLER_DEVICE_FLOW_ENABLED uses below in the anonymous-session wiring:
+  // the backend's POST /v1/deployments/bootstrap now validates a bootstrap
+  // JWT's `aud` claim against this specific bundle's resource URI before
+  // minting a token for it, so these routes are safe to enable once that
+  // backend deploy has landed. Leave unset against any backend still
+  // missing that check - without it, any valid Keycloak user token could
+  // bootstrap a deployment for an arbitrary bundle_id.
+  if (process.env.BUNDLER_NATIVE_OAUTH_ENABLED === "true") {
+    router.post("/mcp/:bundleId", mcpLimiter, handleMcpPost);
+    router.get("/mcp/:bundleId", mcpLimiter, handleMcpGet);
+    router.delete("/mcp/:bundleId", mcpLimiter, handleMcpDelete);
+  }
 
   /**
    * Kubernetes readiness probe - deliberately separate from /status. Liveness

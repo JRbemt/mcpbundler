@@ -25,6 +25,7 @@ export interface MiddlewareContext {
     readonly sessionId: string;
     readonly bundleId: string;
     readonly loadingStrategy: LoadingStrategy;
+    readonly accessToken: string;
 
     notifyToolsChanged(): void;
     notifyResourcesChanged(): void;
@@ -47,9 +48,11 @@ export interface MiddlewareContext {
  *   Per tools/list     → transformToolList (inject own tools here)
  *   Per resources/list → transformResourceList
  *   Per prompts/list   → transformPromptList
- *   Per tools/call     → handleOwnToolCall → onBeforeToolCall → upstream → onAfterToolCall
+ *   Per tools/call     → onBeforeToolCall (may short-circuit) → handleOwnToolCall → upstream → onAfterToolCall
+ *   Per resources/read,
+ *   Per prompts/get     → onBeforeToolCall (may short-circuit, synthetic name) → upstream
  *   Per upstream attach → onUpstreamAttached
- *   Session closed  → teardown
+ *   Removed from a live session, or session closed → teardown
  */
 export interface BundlerMiddleware {
     readonly name: string;
@@ -82,14 +85,23 @@ export interface BundlerMiddleware {
     ): Promise<CallToolResult | null>;
 
     /**
-     * Called immediately before a tool call is forwarded to an upstream.
-     * Use for auditing, rate limiting, or argument mutation.
-     * Not called when `handleOwnToolCall` intercepts the call.
+     * Called before a tool call is dispatched at all - before both upstream
+     * routing and `handleOwnToolCall`, and also before `readResource`/
+     * `getPrompt` (using a synthetic `resource:${uri}`/`prompt:${name}`
+     * params.name, since those calls have no CallToolRequest of their own).
+     * Use for auditing, rate limiting, spend checks, or argument mutation -
+     * anything that must run even for a middleware-owned tool, since a
+     * middleware-owned call can have real cost (e.g. an LLM completion) and
+     * is not automatically free just because it never reaches an upstream.
+     * Returning a `CallToolResult` short-circuits the call: no request
+     * reaches `handleOwnToolCall` or the upstream, and no later middleware's
+     * `onBeforeToolCall` runs. Return nothing (undefined) to let the call
+     * proceed to `handleOwnToolCall`/upstream routing.
      */
     onBeforeToolCall(
         params: CallToolRequest["params"],
         context: MiddlewareContext,
-    ): Promise<void>;
+    ): Promise<CallToolResult | void>;
 
     /**
      * Called with the upstream result before it is returned to the agent.
@@ -139,7 +151,7 @@ export abstract class AbstractBundlerMiddleware implements BundlerMiddleware {
     async onBeforeToolCall(
         _params: CallToolRequest["params"],
         _ctx: MiddlewareContext,
-    ): Promise<void> { }
+    ): Promise<CallToolResult | void> { }
 
     async onAfterToolCall(
         _params: CallToolRequest["params"],

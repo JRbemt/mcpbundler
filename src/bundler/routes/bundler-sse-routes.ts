@@ -140,6 +140,11 @@ export function createSseRoutes(bundler: BundlerServer): Router {
     // Create session using new architecture
     const session = bundler.createSession(sessionId, bundleConfig.bundleId, token);
 
+    // Matches the streamable-HTTP bootstrap path (bundler-mcp-routes.ts) -
+    // this transport accepts the same bundle access tokens and must not be
+    // a way to bypass the spend check just by choosing the older protocol.
+    bundler.installSpendCheckMiddleware(session);
+
     // Attach resolved upstreams from bundle (async)
     bundler.attachUpstreamsAsync(session, bundleConfig.upstreams).then(() => {
       logger.debug({ sessionId }, "Session connected to upstreams");

@@ -12,6 +12,7 @@ function makeCtx(overrides: Partial<MiddlewareContext> = {}): MiddlewareContext 
     return {
         sessionId: "s1",
         bundleId: "b1",
+        accessToken: "test-token",
         notifyToolsChanged: vi.fn(),
         notifyResourcesChanged: vi.fn(),
         notifyPromptsChanged: vi.fn(),

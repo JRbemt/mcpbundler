@@ -9,6 +9,7 @@ function makeCtx(namespaces: string[], available = namespaces): MiddlewareContex
     return {
         sessionId: "s",
         bundleId: "b",
+        accessToken: "test-token",
         notifyToolsChanged: vi.fn(),
         notifyResourcesChanged: vi.fn(),
         notifyPromptsChanged: vi.fn(),

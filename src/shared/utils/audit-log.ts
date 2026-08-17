@@ -68,6 +68,7 @@ function pushTelemetry(args: {
   errorMessage?: string;
 }): void {
   if (!BACKEND_URL) return;
+  if (!args.accessToken) return;
   fetch(`${BACKEND_URL}/v1/bundler/telemetry`, {
     method: "POST",
     headers: {

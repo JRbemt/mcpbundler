@@ -3,7 +3,9 @@
  *
  * Pino-based logger with custom caller information automatically injected into
  * every log entry. Detects calling file, function, and line number via stack
- * trace analysis. Supports PM2 mode (plain JSON) and dev mode (colorized).
+ * trace analysis. LOG_FORMAT=json writes pino's native structured JSON straight
+ * to stdout (for log shipping); anything else routes through pino-pretty for
+ * colorized human-readable output.
  *
  * Log format: [file:function:line] message. Filters internal files and node_modules
  * from caller detection to surface actual application code.
@@ -89,33 +91,37 @@ function getCallerInfo(): string {
 }
 
 /**
- * Detect if running under PM2
+ * Output format selection.
+ *
+ * LOG_FORMAT=json skips pino-pretty entirely and lets pino write its
+ * native JSON to stdout - set in the bundler-config ConfigMap for every
+ * Kubernetes overlay so Promtail gets parseable fields instead of
+ * pino-pretty's human-formatted text. Unset (local dev, docker-compose)
+ * keeps the existing colorized pretty-printed output.
  */
-const isRunningUnderPM2 = !!process.env.PM2_HOME || process.env.pm_id !== undefined;
+const useJsonOutput = process.env.LOG_FORMAT === 'json';
 
-/**
- * Logger setup with custom caller information
- * In PM2 mode: plain JSON output for PM2 log capture
- * In dev mode: colorized pretty output for local development
- */
-const transport = pino.transport({
-    target: 'pino-pretty',
-    options: {
-        colorize: !isRunningUnderPM2,
-        translateTime: 'SYS:HH:MM:ss',
-        ignore: 'pid,hostname,caller',
-        messageFormat: '\x1b[33m[{caller}]\x1b[0m \x1b[36m{msg}\x1b[0m',
-    },
-    level: 'info'
-});
-
-const baseLogger = pino(
-    {
+const baseLogger = useJsonOutput
+    ? pino({
         level: process.env.LOG_LEVEL || 'debug',
         timestamp: pino.stdTimeFunctions.isoTime,
-    },
-    transport
-);
+    })
+    : pino(
+        {
+            level: process.env.LOG_LEVEL || 'debug',
+            timestamp: pino.stdTimeFunctions.isoTime,
+        },
+        pino.transport({
+            target: 'pino-pretty',
+            options: {
+                colorize: true,
+                translateTime: 'SYS:HH:MM:ss',
+                ignore: 'pid,hostname,caller',
+                messageFormat: '\x1b[33m[{caller}]\x1b[0m \x1b[36m{msg}\x1b[0m',
+            },
+            level: 'info',
+        })
+    );
 
 // Create logger with custom caller detection
 class LoggerWithCaller {

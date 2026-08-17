@@ -30,7 +30,7 @@ const ConcurrencySchema = z.object({
 
 export const LLMProviderConfigSchema = z.object({
     name: z.string().min(1),
-    type: z.literal("openai-compatible"),
+    type: z.enum(["openai-compatible", "anthropic"]),
     model: z.string().min(1),
     endpoint: z.string().url(),
     api_key: z.string().optional(),

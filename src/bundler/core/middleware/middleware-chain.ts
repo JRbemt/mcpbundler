@@ -8,7 +8,7 @@ import logger from "../../../shared/utils/logger.js";
  * Execution semantics:
  * - `transformToolList`  : sequential fold - each middleware receives the output of the previous.
  * - `handleOwnToolCall`  : first-match wins - iterates until a middleware returns non-null.
- * - `onBeforeToolCall`   : all middlewares called in registration order.
+ * - `onBeforeToolCall`   : first-match wins - iterates until a middleware returns a CallToolResult; a throwing middleware is skipped and the next one still runs.
  * - `onAfterToolCall`    : all middlewares called in registration order.
  * - `onUpstreamAttached` : all middlewares called in registration order.
  * - `teardown`           : all middlewares called in registration order; errors are logged, not thrown.
@@ -32,6 +32,10 @@ export class MiddlewareChain {
 
     has(name: string): boolean {
         return this.middlewares.some((m) => m.name === name);
+    }
+
+    get(name: string): BundlerMiddleware | undefined {
+        return this.middlewares.find((m) => m.name === name);
     }
 
     getNames(): string[] {
@@ -104,10 +108,11 @@ export class MiddlewareChain {
     async onBeforeToolCall(
         params: CallToolRequest["params"],
         ctx: MiddlewareContext,
-    ): Promise<void> {
+    ): Promise<CallToolResult | void> {
         for (const mw of this.middlewares) {
             try {
-                await mw.onBeforeToolCall(params, ctx);
+                const result = await mw.onBeforeToolCall(params, ctx);
+                if (result) return result;
             } catch (err) {
                 logger.error(
                     { middleware: mw.name, sessionId: ctx.sessionId, tool: params.name, err },

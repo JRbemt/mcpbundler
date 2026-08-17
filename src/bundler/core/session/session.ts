@@ -45,6 +45,8 @@ import logger from "../../../shared/utils/logger.js";
 import { UpstreamConnectionPool } from "../upstream/upstream-connector-pool.js";
 import { IConnectorFactory } from "../upstream/upstream-connector-factory.js";
 import { LoadingStrategy } from "./loading/loading-strategy.js";
+import { BundlerStage } from "./stage.js";
+import { attachStageUpstreams } from "./loading/attach-stage-upstreams.js";
 import { BundlerMiddleware, MiddlewareContext } from "../middleware/middleware.js";
 import { MiddlewareChain } from "../middleware/middleware-chain.js";
 import { SessionStateStore } from "./session-state-store.js";
@@ -85,7 +87,7 @@ interface DomainEvent {
 export class Session extends EventEmitter {
     readonly id: string;
     readonly bundleId: string;
-    readonly accessToken: string;
+    accessToken: string;
     readonly createdAt: Date;
     private namespaceService: INamespaceService | null;
     private permissionService: IPermissionService | null;
@@ -104,6 +106,7 @@ export class Session extends EventEmitter {
 
     private loadingStrategy: LoadingStrategy = LoadingStrategy.EAGER;
     private availableUpstreams: MCPConfig[] = [];
+    private currentStage: BundlerStage | null = null;
     private readonly middlewareChain: MiddlewareChain = new MiddlewareChain();
     private readonly stateStore: SessionStateStore;
 
@@ -192,16 +195,127 @@ export class Session extends EventEmitter {
         logger.debug({ sessionId: this.id, middleware: middleware.name }, "Middleware added");
     }
 
-    removeMiddleware(name: string): boolean {
-        const removed = this.middlewareChain.remove(name);
-        if (removed) {
-            logger.debug({ sessionId: this.id, middleware: name }, "Middleware removed");
+    async removeMiddleware(name: string): Promise<boolean> {
+        const middleware = this.middlewareChain.get(name);
+        if (!middleware) return false;
+
+        this.middlewareChain.remove(name);
+
+        try {
+            await middleware.teardown();
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error({ sessionId: this.id, middleware: name, err: msg }, "Middleware teardown failed during removal");
         }
-        return removed;
+
+        logger.debug({ sessionId: this.id, middleware: name }, "Middleware removed");
+        return true;
     }
 
     getMiddlewareNames(): string[] {
         return this.middlewareChain.getNames();
+    }
+
+    /**
+     * Updates the token this session's middleware/telemetry reads for
+     * subsequent authenticated calls to the backend. Anonymous sessions are
+     * constructed with an empty accessToken (nothing to authenticate with
+     * yet); a device-flow transition to a real bundle is the one place that
+     * changes after construction, once Keycloak has approved a human and the
+     * deployment-bootstrap endpoint has minted a real bundle token.
+     * getMiddlewareContext() reads session.accessToken live on every call
+     * (not a value captured at session-creation time), so this takes effect
+     * immediately for the next tool call - no re-registration needed.
+     */
+    setAccessToken(token: string): void {
+        this.accessToken = token;
+    }
+
+    // Stage Management
+
+    getCurrentStage(): BundlerStage | null {
+        return this.currentStage;
+    }
+
+    /**
+     * Record a session's initial stage without running the unload/load
+     * sequence - for a session whose first stage's middlewares/upstreams
+     * were already installed directly during construction, so there is
+     * nothing to unload yet. A later transitionTo call uses this as its
+     * previousStage, so that initial stage's middlewares get torn down
+     * correctly when the session moves on to a new one.
+     */
+    setCurrentStage(stage: BundlerStage): void {
+        this.currentStage = stage;
+        this.setLoadingStrategy(stage.loadingStrategy);
+        this.setAvailableUpstreams(stage.upstreams);
+    }
+
+    /**
+     * Move this session from its current stage to a new one in place - same
+     * session ID, same transport connection, only the active middlewares
+     * and upstreams change.
+     *
+     * Unload: remove the outgoing stage's middlewares. Each removal runs
+     * that middleware's teardown() hook (see removeMiddleware), so a future
+     * middleware holding real resources has somewhere to release them.
+     * Load: install the incoming stage's middlewares.
+     * Attach: bring the incoming stage's upstreams online per its loading
+     * strategy, via the same eager/progressive helper session bootstrap
+     * uses (attachStageUpstreams).
+     * Notify: emit list_changed for the middleware swap only after
+     * attachStageUpstreams returns, not before - EAGER's attach is awaited
+     * here, so an emit placed earlier would tell the client its tools
+     * changed while the incoming stage's upstream tools are still
+     * connecting, and a client that reacts by immediately calling
+     * tools/list would get an incomplete list. Placing it after means this
+     * emit is redundant with the one EAGER's attachStageUpstreams already
+     * fires internally, which is an accepted extra notify, not a
+     * correctness issue. PROGRESSIVE does not await its upstream attach, so
+     * this emit still lands right after the middleware swap for that
+     * strategy; each upstream's own attach call notifies the client again
+     * as it comes online (see Session.attachUpstream).
+     *
+     * Upstream teardown for the outgoing stage is deliberately not
+     * implemented - every transition this system builds moves from a stage
+     * with zero upstreams (anonymous) to one with upstreams to add, never
+     * the reverse. A previous stage that does carry upstreams is logged,
+     * not torn down.
+     */
+    async transitionTo(newStage: BundlerStage): Promise<void> {
+        this.ensureActive();
+        const previousStage = this.currentStage;
+
+        if (previousStage) {
+            if (previousStage.upstreams.length > 0) {
+                logger.warn({
+                    sessionId: this.id,
+                    fromStage: previousStage.name,
+                    toStage: newStage.name,
+                    upstreamCount: previousStage.upstreams.length,
+                }, "transitionTo does not tear down the outgoing stage's upstreams - they remain attached");
+            }
+            for (const middleware of previousStage.middlewares) {
+                await this.removeMiddleware(middleware.name);
+            }
+        }
+
+        for (const middleware of newStage.middlewares) {
+            if (!this.middlewareChain.get(middleware.name)) {
+                this.addMiddleware(middleware);
+            }
+        }
+
+        this.setCurrentStage(newStage);
+
+        await attachStageUpstreams(this, newStage.upstreams, newStage.loadingStrategy);
+        this.emitListChanged();
+
+        logger.info({
+            sessionId: this.id,
+            fromStage: previousStage?.name ?? null,
+            toStage: newStage.name,
+        }, "Session transitioned to new stage");
     }
 
     /**
@@ -214,6 +328,7 @@ export class Session extends EventEmitter {
         return {
             get sessionId() { return session.id; },
             get bundleId() { return session.bundleId; },
+            get accessToken() { return session.accessToken; },
             get loadingStrategy() { return session.loadingStrategy; },
 
             notifyToolsChanged: () => session.emit(SESSION_EVENTS.NOTIFY_TOOLS_CHANGED, {}),
@@ -398,6 +513,19 @@ export class Session extends EventEmitter {
 
         const ctx = this.getMiddlewareContext();
 
+        // Runs before handleOwnToolCall now, not after - a middleware-owned
+        // tool (e.g. bundler__set_context, which performs a real LLM call)
+        // is not automatically free just because it is not routed to an
+        // upstream. A spend-check denial here short-circuits before any
+        // owning middleware's side effects run. MiddlewareChain.onBeforeToolCall
+        // never throws - middleware errors are caught and logged internally -
+        // so this call is safe outside the try block below.
+        const beforeResult = await this.middlewareChain.onBeforeToolCall(params, ctx);
+        if (beforeResult) {
+            this.recordActivity();
+            return beforeResult;
+        }
+
         // Middleware-owned tools (e.g. bundler__set_context) are handled here before
         // any upstream routing. First non-null result short-circuits the call.
         const ownResult = await this.middlewareChain.handleOwnToolCall(params, ctx);
@@ -412,8 +540,6 @@ export class Session extends EventEmitter {
 
         let namespace: string | undefined;
         try {
-            await this.middlewareChain.onBeforeToolCall(params, ctx);
-
             // Extract namespace to route to correct upstream
             const extracted = this.namespaceService.extractNamespaceFromName(params.name);
             namespace = extracted.namespace;
@@ -496,6 +622,25 @@ export class Session extends EventEmitter {
      */
     async readResource(params: ReadResourceRequest["params"]): Promise<ReadResourceResult> {
         this.ensureActive();
+
+        const ctx = this.getMiddlewareContext();
+
+        // Reuses the same tool-call gate tool calls are billed through - the
+        // gate itself is generic (any CallToolResult-shaped denial), so a
+        // synthetic params.name lets a resource read run through the exact
+        // same accounting path a tool call does, rather than needing a
+        // parallel resource-specific spend-check entry point. A denial has
+        // no ReadResourceResult shape to return, so it is surfaced as a
+        // thrown error instead - the MCP SDK's mechanism for a resource
+        // request failing.
+        const gateResult = await this.middlewareChain.onBeforeToolCall(
+            { name: `resource:${params.uri}`, arguments: {} }, ctx,
+        );
+        if (gateResult) {
+            this.recordActivity();
+            const text = gateResult.content?.[0]?.type === "text" ? gateResult.content[0].text : "Access denied";
+            throw new Error(text);
+        }
 
         if (!this.namespaceService) {
             return { contents: [] };
@@ -617,6 +762,18 @@ export class Session extends EventEmitter {
      */
     async getPrompt(params: GetPromptRequest["params"]): Promise<GetPromptResult> {
         this.ensureActive();
+
+        const ctx = this.getMiddlewareContext();
+
+        // Same synthetic-name gate as readResource - see its comment for why.
+        const gateResult = await this.middlewareChain.onBeforeToolCall(
+            { name: `prompt:${params.name}`, arguments: params.arguments ?? {} }, ctx,
+        );
+        if (gateResult) {
+            this.recordActivity();
+            const text = gateResult.content?.[0]?.type === "text" ? gateResult.content[0].text : "Access denied";
+            throw new Error(text);
+        }
 
         if (!this.namespaceService) {
             return { messages: [] };

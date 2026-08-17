@@ -16,6 +16,7 @@ function makeCtx(overrides: Partial<MiddlewareContext> = {}): MiddlewareContext 
     return {
         sessionId: "test-session",
         bundleId: "test-bundle",
+        accessToken: "test-token",
         notifyToolsChanged: vi.fn(),
         notifyResourcesChanged: vi.fn(),
         notifyPromptsChanged: vi.fn(),
@@ -88,6 +89,16 @@ describe("MiddlewareChain", () => {
             chain.add(new SpyMiddleware("first"));
             chain.add(new SpyMiddleware("second"));
             expect(chain.getNames()).toEqual(["first", "second"]);
+        });
+
+        it("get returns the middleware instance by name", () => {
+            const mw = new SpyMiddleware("a");
+            chain.add(mw);
+            expect(chain.get("a")).toBe(mw);
+        });
+
+        it("get returns undefined for an unknown name", () => {
+            expect(chain.get("missing")).toBeUndefined();
         });
     });
 
@@ -187,6 +198,27 @@ describe("MiddlewareChain", () => {
             chain.add(b);
             await expect(chain.onBeforeToolCall(makeParams(), ctx)).resolves.not.toThrow();
             expect(b.beforeSpy).toHaveBeenCalled();
+        });
+
+        it("returns the first middleware's short-circuit result and stops calling further middlewares", async () => {
+            const ctx = makeCtx();
+            const a = new SpyMiddleware("a");
+            const b = new SpyMiddleware("b");
+            a.beforeSpy.mockResolvedValue({ content: [{ type: "text" as const, text: "blocked" }], isError: true });
+            chain.add(a);
+            chain.add(b);
+
+            const result = await chain.onBeforeToolCall(makeParams(), ctx);
+
+            expect(result).toEqual({ content: [{ type: "text", text: "blocked" }], isError: true });
+            expect(b.beforeSpy).not.toHaveBeenCalled();
+        });
+
+        it("returns undefined when no middleware short-circuits", async () => {
+            const ctx = makeCtx();
+            chain.add(new SpyMiddleware("a"));
+            const result = await chain.onBeforeToolCall(makeParams(), ctx);
+            expect(result).toBeUndefined();
         });
     });
 
