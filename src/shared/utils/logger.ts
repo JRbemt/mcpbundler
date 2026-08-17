@@ -95,7 +95,7 @@ function getCallerInfo(): string {
  *
  * LOG_FORMAT=json skips pino-pretty entirely and lets pino write its
  * native JSON to stdout - set in the bundler-config ConfigMap for every
- * Kubernetes overlay so Promtail gets parseable fields instead of
+ * Kubernetes overlay so Alloy gets parseable fields instead of
  * pino-pretty's human-formatted text. Unset (local dev, docker-compose)
  * keeps the existing colorized pretty-printed output.
  */
